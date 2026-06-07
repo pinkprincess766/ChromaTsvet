@@ -1,0 +1,24 @@
+[package]
+name = "spectrometer_rust"
+version = "0.1.0"
+edition = "2021"
+description = "High-performance real-time signal processing for spectrometers"
+license = "MIT OR Apache-2.0"
+
+[lib]
+name = "spectrometer_rust"
+crate-type = ["cdylib"]
+
+[dependencies]
+pyo3 = { version = "0.28", features = ["extension-module", "abi3-py39"] }
+numpy = "0.28"                    # ← было pyo3-numpy
+ndarray = { version = "0.16", features = ["rayon"] }
+rustfft = "6.4"
+realfft = "3.5"
+num-complex = "0.4"
+rayon = "1.10"
+log = "0.4"
+env_logger = "0.11"
+
+medians = "3.0"
+savgol-rs = "0.1"
