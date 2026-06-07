@@ -1,6 +1,6 @@
 # ChromaTsvet
 
-ChromaTsvet — desktop-приложение для обработки и первичного анализа спектральных данных и хроматограмм.
+ChromaTsvet — Desktop tool for spectral data processing and substance identification (Rust + PyO3 + PyQt5)
 
 ## Технологии
 
