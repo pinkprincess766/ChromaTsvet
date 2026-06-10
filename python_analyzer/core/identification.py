@@ -21,7 +21,7 @@ class SpectrumIdentifier:
         self.db_path = Path(db_path)
         self.conn = sqlite3.connect(self.db_path)
         self._create_table()
-        self.log("✅ База подключена")
+        self.log("✅ Database connected")
 
     def _create_table(self):
         self.conn.execute("""
@@ -42,24 +42,24 @@ class SpectrumIdentifier:
                 VALUES (?, ?, ?)
             """, (name.strip(), formula.strip(), spectrum_json))
             self.conn.commit()
-            self.log(f"✅ Добавлено: {name}")
+            self.log(f"✅ Added: {name}")
             return True
         except Exception as e:
-            self.log(f"❌ Ошибка: {e}")
+            self.log(f"❌ Error: {e}")
             return False
 
     def clear_database(self):
         try:
             self.conn.execute("DELETE FROM compounds")
             self.conn.commit()
-            self.log("🗑 База очищена")
+            self.log("🗑 Database cleared")
             return True
         except Exception as e:
-            self.log(f"❌ Ошибка очистки: {e}")
+            self.log(f"❌ Clear error: {e}")
             return False
 
     def restore_default(self):
-        """Восстанавливает стандартную базу"""
+        """Restore the default reference database."""
         self.clear_database()
         default_data = [
             ("Acetone", "C3H6O", [1,3,10,4,1]),
@@ -71,7 +71,7 @@ class SpectrumIdentifier:
         ]
         for name, formula, spectrum in default_data:
             self.add_reference(name, spectrum, formula)
-        self.log("♻ База восстановлена до стандартной")
+        self.log("♻ Default database restored")
         return True
 
     def find_matches(self, unknown_spectrum: np.ndarray) -> List[MatchResult]:

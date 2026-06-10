@@ -164,7 +164,7 @@ class SettingsDialog(QDialog):
     def __init__(self, parent):
         super().__init__(parent)
         self.main_window = parent
-        self.setWindowTitle("Настройки")
+        self.setWindowTitle("Settings")
         self.setMinimumWidth(360)
 
         layout = QVBoxLayout(self)
@@ -178,34 +178,34 @@ class SettingsDialog(QDialog):
         form.setVerticalSpacing(10)
 
         self.theme_combo = QComboBox()
-        self.theme_combo.addItem("Тёмная", "dark")
-        self.theme_combo.addItem("Светлая", "light")
+        self.theme_combo.addItem("Dark", "dark")
+        self.theme_combo.addItem("Light", "light")
         self.theme_combo.setCurrentIndex(self.theme_combo.findData(parent.theme))
         self.theme_combo.currentIndexChanged.connect(self._theme_changed)
-        form.addRow("Тема", self.theme_combo)
+        form.addRow("Theme", self.theme_combo)
 
         self.font_combo = QComboBox()
         for family in self._font_choices():
             self.font_combo.addItem(family)
         self.font_combo.setCurrentText(parent.font_family)
         self.font_combo.currentTextChanged.connect(self._font_changed)
-        form.addRow("Шрифт", self.font_combo)
+        form.addRow("Font", self.font_combo)
 
         self.font_size_spin = QSpinBox()
         self.font_size_spin.setRange(9, 16)
         self.font_size_spin.setValue(parent.font_size)
         self.font_size_spin.setSuffix(" pt")
         self.font_size_spin.valueChanged.connect(self._font_size_changed)
-        form.addRow("Размер шрифта", self.font_size_spin)
+        form.addRow("Font size", self.font_size_spin)
 
         layout.addLayout(form)
 
-        hint = QLabel("Шрифт применяется сразу. Если отдельные элементы ОС не обновились, перезапустите приложение.")
+        hint = QLabel("Font changes are applied immediately. Restart the app if some system controls do not refresh.")
         hint.setWordWrap(True)
         layout.addWidget(hint)
 
         buttons = QHBoxLayout()
-        self.reset_button = QPushButton("Сбросить настройки")
+        self.reset_button = QPushButton("Reset settings")
         self.reset_button.clicked.connect(self._reset_settings)
         buttons.addWidget(self.reset_button)
         buttons.addStretch()
@@ -251,7 +251,7 @@ class SettingsDialog(QDialog):
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("ChromaTsvet — Анализ спектральных данных")
+        self.setWindowTitle("ChromaTsvet — Spectral Data Analysis")
         self.resize(1700, 950)
 
         self.identifier = SpectrumIdentifier()
@@ -271,12 +271,12 @@ class MainWindow(QMainWindow):
 
         btn_layout = QHBoxLayout()
         btn_layout.setSpacing(6)
-        self.btn_open = QPushButton("Открыть файл")
-        self.btn_run = QPushButton("Обработать")
-        self.btn_add = QPushButton("➕ Добавить")
-        self.btn_restore = QPushButton("♻ Восстановить базу")
-        self.btn_export = QPushButton("📄 PDF Отчёт")
-        self.btn_settings = QPushButton("⚙ Настройки")
+        self.btn_open = QPushButton("Open file")
+        self.btn_run = QPushButton("Analyze")
+        self.btn_add = QPushButton("➕ Add")
+        self.btn_restore = QPushButton("♻ Restore library")
+        self.btn_export = QPushButton("📄 PDF Report")
+        self.btn_settings = QPushButton("⚙ Settings")
         
         self.btn_open.clicked.connect(self.load_file)
         self.btn_run.clicked.connect(self.run_analysis)
@@ -313,7 +313,7 @@ class MainWindow(QMainWindow):
 
         self.table = QTableWidget()
         self.table.setColumnCount(4)
-        self.table.setHorizontalHeaderLabels(["Вещество", "Формула", "Score", "Совп. пики"])
+        self.table.setHorizontalHeaderLabels(["Substance", "Formula", "Score", "Matched points"])
         self.table.setAlternatingRowColors(True)
         self.table.verticalHeader().setVisible(False)
         self.table.horizontalHeader().setStretchLastSection(True)
@@ -323,10 +323,10 @@ class MainWindow(QMainWindow):
         splitter.addWidget(right_widget)
         splitter.setSizes([450, 1250])
 
-        self.status = QLabel("Готов к работе")
+        self.status = QLabel("Ready")
         main_layout.addWidget(self.status)
 
-        self.log("✅ Программа запущена")
+        self.log("✅ Application started")
 
         self.current_data = [0.1, 0.3, 0.8, 2.5, 9.0, 22.0, 8.5, 3.0, 1.2, 0.4, 0.2]
         self.run_analysis()
@@ -334,9 +334,9 @@ class MainWindow(QMainWindow):
     def _configure_plot(self):
         colors = self._plot_colors()
         self.plot.setBackground(colors["background"])
-        self._set_plot_title("Спектр")
-        self.plot.setLabel('bottom', 'Индекс', color=colors["muted"], size="10pt")
-        self.plot.setLabel('left', 'Интенсивность', color=colors["muted"], size="10pt")
+        self._set_plot_title("Spectrum")
+        self.plot.setLabel('bottom', 'Index', color=colors["muted"], size="10pt")
+        self.plot.setLabel('left', 'Intensity', color=colors["muted"], size="10pt")
         self.plot.showGrid(x=True, y=True, alpha=0.28 if self.theme == "dark" else 0.22)
 
         plot_item = self.plot.getPlotItem()
@@ -415,26 +415,33 @@ class MainWindow(QMainWindow):
         timestamp = datetime.now().strftime("%H:%M:%S")
         self.terminal.append(f"[{timestamp}] {msg}")
 
+    def display_source_name(self):
+        if self.current_file_name:
+            return self.current_file_name
+        if self.current_data:
+            return "Default / Demo data"
+        return "No file loaded"
+
     def load_file(self):
-        file, _ = QFileDialog.getOpenFileName(self, "Открыть спектр", "", "CSV (*.csv);;TXT (*.txt)")
+        file, _ = QFileDialog.getOpenFileName(self, "Open spectrum", "", "CSV (*.csv);;TXT (*.txt)")
         if file:
             data, skipped_rows = self._read_spectrum_file(file)
             if not data:
-                QMessageBox.warning(self, "Ошибка", "В файле не найдено ни одного числового значения. Проверьте формат файла.")
+                QMessageBox.warning(self, "Error", "No numeric values were found in the file. Please check the file format.")
                 return
 
             if skipped_rows:
                 examples = "\n".join(
-                    f"Строка {line_no}: {value}"
+                    f"Line {line_no}: {value}"
                     for line_no, value in skipped_rows[:5]
                 )
                 QMessageBox.warning(
                     self,
-                    "Предупреждение",
-                    f"Файл: {file}\n"
-                    f"Загружено точек: {len(data)}\n"
-                    f"Пропущено строк: {len(skipped_rows)}\n\n"
-                    f"Проблемные значения:\n{examples}"
+                    "Warning",
+                    f"File: {file}\n"
+                    f"Loaded points: {len(data)}\n"
+                    f"Skipped rows: {len(skipped_rows)}\n\n"
+                    f"Problematic values:\n{examples}"
                 )
 
             self.current_data = data
@@ -504,7 +511,7 @@ class MainWindow(QMainWindow):
         matches = self.identifier.find_matches(np.array(result['spectrum']))
 
         self.plot.clear()
-        plot_title = f"Спектр — {self.current_file_name}" if self.current_file_name else "Спектр"
+        plot_title = f"Spectrum — {self.current_file_name}" if self.current_file_name else "Spectrum"
         self._set_plot_title(plot_title)
         x = np.arange(len(result['spectrum']))
         colors = self._plot_colors()
@@ -528,80 +535,158 @@ class MainWindow(QMainWindow):
             self.table.setItem(row, 2, QTableWidgetItem(f"{m.score:.3f}"))
             self.table.setItem(row, 3, QTableWidgetItem(str(m.matched_peaks)))
 
-        self.log(f"Готово! Пиков: {len(result['peaks'])} | Совпадений: {len(matches)}")
+        self.log(f"Done. Peaks: {len(result['peaks'])} | Matches: {len(matches)}")
 
     def add_substance(self):
-        name, ok = QInputDialog.getText(self, "Новое вещество", "Название:")
+        name, ok = QInputDialog.getText(self, "New substance", "Name:")
         if not ok or not name: return
-        formula, ok = QInputDialog.getText(self, "Формула", "Формула:")
+        formula, ok = QInputDialog.getText(self, "Formula", "Formula:")
         if not ok: return
-        ints_str, ok = QInputDialog.getText(self, "Интенсивности", "Через запятую:")
+        ints_str, ok = QInputDialog.getText(self, "Intensities", "Comma-separated values:")
         if not ok: return
         try:
             intensities = [float(x.strip()) for x in ints_str.split(',')]
             self.identifier.add_reference(name, intensities, formula)
-            QMessageBox.information(self, "Успех", f"'{name}' добавлено!")
+            QMessageBox.information(self, "Success", f"'{name}' has been added.")
             self.run_analysis()
         except:
-            QMessageBox.warning(self, "Ошибка", "Неверный формат")
+            QMessageBox.warning(self, "Error", "Invalid format")
 
     def clear_database(self):
-        if QMessageBox.question(self, "Очистка", "Очистить базу?", QMessageBox.Yes | QMessageBox.No) == QMessageBox.Yes:
+        if QMessageBox.question(self, "Clear library", "Clear the reference library?", QMessageBox.Yes | QMessageBox.No) == QMessageBox.Yes:
             self.identifier.clear_database()
-            self.log("🗑 База очищена")
+            self.log("🗑 Reference library cleared")
             self.run_analysis()
 
     def restore_database(self):
-        if QMessageBox.question(self, "Восстановление", "Восстановить стандартную базу?", QMessageBox.Yes | QMessageBox.No) == QMessageBox.Yes:
+        if QMessageBox.question(self, "Restore library", "Restore the default reference library?", QMessageBox.Yes | QMessageBox.No) == QMessageBox.Yes:
             self.identifier.restore_default()
-            self.log("♻ База восстановлена")
+            self.log("♻ Reference library restored")
             self.run_analysis()
 
     def export_pdf(self):
         if not self.current_result:
-            QMessageBox.warning(self, "Ошибка", "Сначала обработайте спектр!")
+            QMessageBox.warning(self, "Error", "Analyze a spectrum before exporting a report.")
             return
 
-        file, _ = QFileDialog.getSaveFileName(self, "Сохранить PDF", f"report_{datetime.now():%Y%m%d_%H%M}.pdf", "PDF (*.pdf)")
+        file, _ = QFileDialog.getSaveFileName(self, "Save PDF report", f"report_{datetime.now():%Y%m%d_%H%M}.pdf", "PDF (*.pdf)")
         if not file: 
             return
 
+        plot_path = None
         try:
+            plot_file = tempfile.NamedTemporaryFile(delete=False, suffix=".png")
+            plot_path = plot_file.name
+            plot_file.close()
+            QApplication.processEvents()
+            self.plot.grab().save(plot_path, "PNG")
+
             c = canvas.Canvas(file, pagesize=A4)
             width, height = A4
+            margin = 50
+            y = height - 55
 
-            # Заголовок
             c.setFont("Helvetica-Bold", 18)
-            c.drawString(100, height - 80, "ChromaTsvet Report")
+            c.drawString(margin, y, "ChromaTsvet Analysis Report")
+            y -= 22
 
-            c.setFont("Helvetica", 12)
-            c.drawString(100, height - 120, f"Date: {datetime.now():%d.%m.%Y %H:%M}")
-            c.drawString(100, height - 140, f"Peaks found: {len(self.current_result['peaks'])}")
-            c.drawString(100, height - 160, f"Points: {len(self.current_data) if self.current_data else 0}")
+            c.setFont("Helvetica", 9)
+            c.setFillColorRGB(0.35, 0.38, 0.43)
+            c.drawString(margin, y, "Spectral data and chromatogram analysis")
+            c.setFillColorRGB(0, 0, 0)
+            y -= 30
 
-            # Таблица
-            y = height - 220
-            c.setFont("Helvetica-Bold", 13)
-            c.drawString(100, y, "Identification Results:")
-            y -= 35
+            c.setFont("Helvetica-Bold", 12)
+            c.drawString(margin, y, "Summary")
+            y -= 18
 
-            c.setFont("Helvetica", 11)
+            c.setFont("Helvetica", 10)
+            summary_rows = [
+                ("Date", f"{datetime.now():%Y-%m-%d %H:%M}"),
+                ("Source file", self.display_source_name()),
+                ("Data points", str(len(self.current_data) if self.current_data else 0)),
+                ("Peaks found", str(len(self.current_result["peaks"]))),
+            ]
+            for label, value in summary_rows:
+                c.drawString(margin, y, f"{label}:")
+                c.drawString(margin + 95, y, value)
+                y -= 15
+            y -= 14
+
+            c.setFont("Helvetica-Bold", 12)
+            c.drawString(margin, y, "Spectrum")
+            y -= 298
+            c.drawImage(plot_path, margin, y, width=width - margin * 2, height=280, preserveAspectRatio=True, anchor='c')
+            y -= 25
+
+            c.setFont("Helvetica-Bold", 12)
+            c.drawString(margin, y, "Detected Peaks")
+            y -= 20
+
+            c.setFont("Helvetica-Bold", 9)
+            c.drawString(margin, y, "Position")
+            c.drawString(margin + 120, y, "Intensity")
+            y -= 13
+            c.line(margin, y, width - margin, y)
+            y -= 12
+
+            c.setFont("Helvetica", 9)
+            peaks = self.current_result["peaks"]
+            if peaks:
+                for peak in peaks:
+                    if y < 90:
+                        c.showPage()
+                        y = height - margin
+                        c.setFont("Helvetica", 9)
+                    c.drawString(margin, y, f"{peak.position:.3f}")
+                    c.drawString(margin + 120, y, f"{peak.intensity:.6g}")
+                    y -= 14
+            else:
+                c.drawString(margin, y, "No peaks detected.")
+                y -= 16
+
+            y -= 10
+            if y < 150:
+                c.showPage()
+                y = height - margin
+
+            c.setFont("Helvetica-Bold", 12)
+            c.drawString(margin, y, "Identification Results")
+            y -= 20
+
+            c.setFont("Helvetica-Bold", 9)
+            c.drawString(margin, y, "Substance")
+            c.drawString(margin + 170, y, "Formula")
+            c.drawString(margin + 270, y, "Score")
+            c.drawString(margin + 340, y, "Matched points")
+            y -= 13
+            c.line(margin, y, width - margin, y)
+            y -= 12
+
+            c.setFont("Helvetica", 9)
             for row in range(self.table.rowCount()):
                 if y < 80:
                     c.showPage()
-                    y = height - 80
+                    y = height - margin
+                    c.setFont("Helvetica", 9)
                 name = self.table.item(row, 0).text()
                 formula = self.table.item(row, 1).text()
                 score = self.table.item(row, 2).text()
-                line = f"{name:12} | {formula:8} | Score: {score}"
-                c.drawString(100, y, line)
-                y -= 22
+                matched_points = self.table.item(row, 3).text()
+                c.drawString(margin, y, name[:28])
+                c.drawString(margin + 170, y, formula[:14])
+                c.drawString(margin + 270, y, score)
+                c.drawString(margin + 340, y, matched_points)
+                y -= 14
 
             c.save()
-            QMessageBox.information(self, "Успех", f"PDF сохранён:\n{file}")
-            self.log("📄 PDF отчёт создан (английская версия)")
+            QMessageBox.information(self, "Success", f"PDF report saved:\n{file}")
+            self.log("📄 PDF report created")
         except Exception as e:
-            QMessageBox.warning(self, "Ошибка", f"Не удалось создать PDF:\n{str(e)}")
+            QMessageBox.warning(self, "Error", f"Could not create PDF report:\n{str(e)}")
+        finally:
+            if plot_path and os.path.exists(plot_path):
+                os.unlink(plot_path)
 if __name__ == "__main__":
     app = QApplication(sys.argv)
     settings = app_settings()
