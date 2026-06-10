@@ -1,8 +1,8 @@
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
 
-mod types;
 mod signal;
+mod types;
 
 pub use types::Peak;
 
@@ -21,7 +21,7 @@ fn get_version() -> &'static str {
 }
 
 #[pyfunction]
-#[pyo3(signature = (data, sample_rate = 1.0, filter_type = "savgol", window_type = "hann", threshold = 3.0))]
+#[pyo3(signature = (data, sample_rate = 1.0, filter_type = "savgol", window_type = "hann", threshold = 3.0, baseline = true))]
 fn process_signal<'py>(
     py: Python<'py>,
     data: Vec<f64>,
@@ -29,6 +29,7 @@ fn process_signal<'py>(
     filter_type: &str,
     window_type: &str,
     threshold: f64,
+    baseline: bool,
 ) -> PyResult<Bound<'py, PyDict>> {
     let mut signal = ndarray::Array1::from_vec(data);
 
@@ -42,13 +43,23 @@ fn process_signal<'py>(
     // 2. FFT + оконная функция
     let spectrum = signal::fft::compute_magnitude_spectrum(&signal, window_type, sample_rate);
 
-    // 3. Поиск пиков
-    let peaks = signal::peak_detection::detect_peaks_adaptive(&spectrum, threshold);
+    // 3. Baseline correction before peak detection
+    let corrected_spectrum = if baseline {
+        let window_size = (spectrum.len() / 20).max(5);
+        let baseline_signal = signal::filters::estimate_baseline(&spectrum, window_size);
+        &spectrum - &baseline_signal
+    } else {
+        spectrum.to_owned()
+    };
+
+    // 4. Поиск пиков
+    let peaks = signal::peak_detection::detect_peaks_adaptive(&corrected_spectrum, threshold);
 
     let dict = PyDict::new(py);
-    let _ = dict.set_item("spectrum", spectrum.to_vec());
+    let _ = dict.set_item("spectrum", corrected_spectrum.to_vec());
     let _ = dict.set_item("peaks", peaks);
     let _ = dict.set_item("sample_rate", sample_rate);
+    let _ = dict.set_item("baseline_corrected", baseline);
 
     Ok(dict)
 }
@@ -56,5 +67,7 @@ fn process_signal<'py>(
 #[pyfunction]
 fn detect_peaks(_py: Python, data: Vec<f64>, threshold: f64) -> PyResult<Vec<Peak>> {
     let arr = ndarray::Array1::from_vec(data);
-    Ok(signal::peak_detection::detect_peaks_adaptive(&arr, threshold))
+    Ok(signal::peak_detection::detect_peaks_adaptive(
+        &arr, threshold,
+    ))
 }

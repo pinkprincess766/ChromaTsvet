@@ -11,13 +11,15 @@ pub fn apply_window(signal: &Array1<f64>, window_type: &str) -> Array1<f64> {
     match window_type.to_lowercase().as_str() {
         "hann" => {
             for i in 0..n {
-                let w = 0.5 * (1.0 - (2.0 * std::f64::consts::PI * i as f64 / (n - 1) as f64).cos());
+                let w =
+                    0.5 * (1.0 - (2.0 * std::f64::consts::PI * i as f64 / (n - 1) as f64).cos());
                 windowed[i] *= w;
             }
         }
         "hamming" => {
             for i in 0..n {
-                let w = 0.54 - 0.46 * (2.0 * std::f64::consts::PI * i as f64 / (n - 1) as f64).cos();
+                let w =
+                    0.54 - 0.46 * (2.0 * std::f64::consts::PI * i as f64 / (n - 1) as f64).cos();
                 windowed[i] *= w;
             }
         }

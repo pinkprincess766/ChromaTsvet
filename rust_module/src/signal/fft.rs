@@ -1,7 +1,11 @@
 use ndarray::prelude::*;
-use rustfft::{FftPlanner, num_complex::Complex};
+use rustfft::{num_complex::Complex, FftPlanner};
 
-pub fn compute_magnitude_spectrum(signal: &Array1<f64>, window_type: &str, _sample_rate: f64) -> Array1<f64> {
+pub fn compute_magnitude_spectrum(
+    signal: &Array1<f64>,
+    window_type: &str,
+    _sample_rate: f64,
+) -> Array1<f64> {
     let windowed = super::window::apply_window(signal, window_type);
 
     let n = windowed.len();
@@ -12,7 +16,10 @@ pub fn compute_magnitude_spectrum(signal: &Array1<f64>, window_type: &str, _samp
     let mut planner = FftPlanner::new();
     let fft = planner.plan_fft_forward(n);
 
-    let mut buffer: Vec<Complex<f64>> = windowed.iter().map(|&x| Complex { re: x, im: 0.0 }).collect();
+    let mut buffer: Vec<Complex<f64>> = windowed
+        .iter()
+        .map(|&x| Complex { re: x, im: 0.0 })
+        .collect();
     fft.process(&mut buffer);
 
     let mut magnitude = Array1::<f64>::zeros(n / 2);
