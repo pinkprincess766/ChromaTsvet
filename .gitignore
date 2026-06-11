@@ -53,3 +53,5 @@ Thumbs.db
 # Тестовые и временные файлы
 test_*.csv
 test_*.txt
+library.db
+*.db
