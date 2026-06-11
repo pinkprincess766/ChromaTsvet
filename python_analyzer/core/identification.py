@@ -60,7 +60,9 @@ class SpectrumIdentifier:
 
     def restore_default(self):
         """Restore the default reference database."""
-        self.clear_database()
+        if not self.clear_database():
+            return False
+
         default_data = [
             ("Acetone", "C3H6O", [1,3,10,4,1]),
             ("Ethanol", "C2H5OH", [2,8,5,1]),
@@ -70,7 +72,9 @@ class SpectrumIdentifier:
             ("Toluene", "C7H8", [4,11,7,2])
         ]
         for name, formula, spectrum in default_data:
-            self.add_reference(name, spectrum, formula)
+            if not self.add_reference(name, spectrum, formula):
+                return False
+
         self.log("♻ Default database restored")
         return True
 
