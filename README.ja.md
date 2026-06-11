@@ -27,7 +27,7 @@ Python によるデスクトップ UI と、Rust/PyO3 による信号処理コ�
 2. Python 依存パッケージをインストールします。
 
    ```bat
-   py -m pip install numpy PyQt5 pyqtgraph reportlab Pillow
+   py -m pip install numpy scipy PyQt5 pyqtgraph reportlab Pillow
    ```
 
 3. コンパイル済みの Rust 拡張モジュールがプロジェクトルートにあることを確認します。
@@ -48,7 +48,7 @@ Python によるデスクトップ UI と、Rust/PyO3 による信号処理コ�
 2. Python 依存パッケージをインストールします。
 
    ```bash
-   python3 -m pip install numpy PyQt5 pyqtgraph reportlab Pillow
+   python3 -m pip install numpy scipy PyQt5 pyqtgraph reportlab Pillow
    ```
 
 3. 使用している OS 向けの Rust/PyO3 拡張モジュールをビルドし、プロジェクトルートに配置します。

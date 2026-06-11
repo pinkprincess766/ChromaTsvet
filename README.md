@@ -27,7 +27,7 @@ The name **ChromaTsvet** honors **Mikhail Semyonovich Tsvet**, the botanist who 
 2. Install the Python dependencies:
 
    ```bat
-   py -m pip install numpy PyQt5 pyqtgraph reportlab Pillow
+   py -m pip install numpy scipy PyQt5 pyqtgraph reportlab Pillow
    ```
 
 3. Make sure the compiled Rust extension module is available in the project root:
@@ -48,7 +48,7 @@ The name **ChromaTsvet** honors **Mikhail Semyonovich Tsvet**, the botanist who 
 2. Install the Python dependencies:
 
    ```bash
-   python3 -m pip install numpy PyQt5 pyqtgraph reportlab Pillow
+   python3 -m pip install numpy scipy PyQt5 pyqtgraph reportlab Pillow
    ```
 
 3. Build or place the platform-specific Rust/PyO3 extension module in the project root.
