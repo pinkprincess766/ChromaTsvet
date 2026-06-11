@@ -39,12 +39,7 @@ pub fn estimate_baseline(signal: &Array1<f64>, window_size: usize) -> Array1<f64
     let window_size = normalized_window_size(window_size, n);
     let smooth_window = normalized_window_size(5, n);
 
-    // First pass: rolling minimum follows the lower envelope and ignores peaks.
-    let lower_envelope = rolling_minimum(signal, window_size);
-
-    // Median smoothing removes the staircase pattern without pulling the
-    // baseline upward toward isolated high-intensity samples.
-    let first_baseline = median_smooth(&lower_envelope, smooth_window);
+    let first_baseline = estimate_baseline_simple(signal, window_size);
 
     // A residual pass compensates for slow local bias left by the first
     // rolling minimum. On a well-estimated background this correction is near zero.
@@ -70,6 +65,25 @@ pub fn estimate_baseline(signal: &Array1<f64>, window_size: usize) -> Array1<f64
     }
 
     baseline
+}
+
+/// Estimates the baseline using a single lower-envelope smoothing pass.
+pub fn estimate_baseline_simple(signal: &Array1<f64>, window_size: usize) -> Array1<f64> {
+    let n = signal.len();
+    if n == 0 {
+        return Array1::zeros(0);
+    }
+    if n < 3 {
+        return signal.mapv(|value| if value.is_finite() { value } else { 0.0 });
+    }
+
+    let window_size = normalized_window_size(window_size, n);
+    let smooth_window = normalized_window_size(5, n);
+
+    // The rolling minimum follows the lower envelope; median smoothing
+    // removes its staircase pattern without pulling it toward sharp peaks.
+    let lower_envelope = rolling_minimum(signal, window_size);
+    median_smooth(&lower_envelope, smooth_window)
 }
 
 fn normalized_window_size(requested: usize, signal_len: usize) -> usize {
@@ -164,5 +178,15 @@ mod tests {
             .iter()
             .zip(data.iter())
             .all(|(baseline, signal)| baseline <= signal));
+    }
+
+    #[test]
+    fn test_simple_baseline_ignores_sharp_peaks() {
+        let data = array![1.0, 1.1, 1.2, 8.0, 1.4, 1.5, 1.6];
+        let baseline = estimate_baseline_simple(&data, 5);
+
+        assert_eq!(baseline.len(), data.len());
+        assert!(baseline[3] < 2.0);
+        assert!(baseline.iter().all(|value| value.is_finite()));
     }
 }

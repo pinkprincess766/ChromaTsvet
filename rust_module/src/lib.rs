@@ -21,7 +21,17 @@ fn get_version() -> &'static str {
 }
 
 #[pyfunction]
-#[pyo3(signature = (data, sample_rate = 1.0, filter_type = "savgol", window_type = "hann", threshold = 3.0, baseline = true))]
+#[pyo3(signature = (
+    data,
+    sample_rate = 1.0,
+    filter_type = "savgol",
+    window_type = "hann",
+    threshold = 3.0,
+    baseline = true,
+    baseline_method = "improved",
+    prominence = 0.0,
+    distance = 0
+))]
 fn process_signal<'py>(
     py: Python<'py>,
     data: Vec<f64>,
@@ -30,6 +40,9 @@ fn process_signal<'py>(
     window_type: &str,
     threshold: f64,
     baseline: bool,
+    baseline_method: &str,
+    prominence: f64,
+    distance: usize,
 ) -> PyResult<Bound<'py, PyDict>> {
     let mut signal = ndarray::Array1::from_vec(data);
 
@@ -44,22 +57,43 @@ fn process_signal<'py>(
     let spectrum = signal::fft::compute_magnitude_spectrum(&signal, window_type, sample_rate);
 
     // 3. Baseline correction before peak detection
-    let corrected_spectrum = if baseline {
+    let baseline_method = baseline_method.to_lowercase();
+    let baseline_applied = baseline && baseline_method != "none";
+    let corrected_spectrum = if baseline_applied {
         let window_size = (spectrum.len() / 20).max(5);
-        let baseline_signal = signal::filters::estimate_baseline(&spectrum, window_size);
+        let baseline_signal = match baseline_method.as_str() {
+            "simple" => signal::filters::estimate_baseline_simple(&spectrum, window_size),
+            _ => signal::filters::estimate_baseline(&spectrum, window_size),
+        };
         &spectrum - &baseline_signal
     } else {
         spectrum.to_owned()
     };
 
     // 4. Поиск пиков
-    let peaks = signal::peak_detection::detect_peaks_adaptive(&corrected_spectrum, threshold);
+    let peaks = signal::peak_detection::detect_peaks_with_settings(
+        &corrected_spectrum,
+        threshold,
+        prominence,
+        distance,
+    );
 
     let dict = PyDict::new(py);
     let _ = dict.set_item("spectrum", corrected_spectrum.to_vec());
     let _ = dict.set_item("peaks", peaks);
     let _ = dict.set_item("sample_rate", sample_rate);
-    let _ = dict.set_item("baseline_corrected", baseline);
+    let _ = dict.set_item("baseline_corrected", baseline_applied);
+    let _ = dict.set_item(
+        "baseline_method",
+        if baseline_applied {
+            baseline_method.as_str()
+        } else {
+            "none"
+        },
+    );
+    let _ = dict.set_item("peak_threshold", threshold);
+    let _ = dict.set_item("peak_prominence", prominence);
+    let _ = dict.set_item("peak_distance", distance);
 
     Ok(dict)
 }

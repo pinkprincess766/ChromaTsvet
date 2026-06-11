@@ -9,6 +9,15 @@ struct PeakCandidate {
 }
 
 pub fn detect_peaks_adaptive(signal: &Array1<f64>, threshold_factor: f64) -> Vec<Peak> {
+    detect_peaks_with_settings(signal, threshold_factor, 0.0, 0)
+}
+
+pub fn detect_peaks_with_settings(
+    signal: &Array1<f64>,
+    threshold_factor: f64,
+    requested_prominence: f64,
+    requested_distance: usize,
+) -> Vec<Peak> {
     if signal.len() < 3 {
         return vec![];
     }
@@ -51,10 +60,20 @@ pub fn detect_peaks_adaptive(signal: &Array1<f64>, threshold_factor: f64) -> Vec
     } else {
         noise * threshold_factor * 0.5
     };
-    let min_prominence = min_prominence
+    let automatic_prominence = min_prominence
         .max(dynamic_range * 0.01)
         .min(dynamic_range * 0.25);
-    let min_distance = (signal.len() / 500).max(1);
+    let requested_prominence = if requested_prominence.is_finite() {
+        requested_prominence.max(0.0)
+    } else {
+        0.0
+    };
+    let min_prominence = automatic_prominence.max(requested_prominence);
+    let min_distance = if requested_distance == 0 {
+        (signal.len() / 500).max(1)
+    } else {
+        requested_distance
+    };
 
     let mut candidates = Vec::new();
     for i in 1..signal.len() - 1 {
@@ -270,5 +289,23 @@ mod tests {
         assert!(peaks[0].width > 0.0);
         assert!(peaks[0].area > 0.0);
         assert!(peaks[0].snr > 0.0);
+    }
+
+    #[test]
+    fn test_requested_prominence_filters_smaller_peaks() {
+        let data = array![0.0, 3.0, 0.0, 0.0, 2.0, 0.0];
+        let peaks = detect_peaks_with_settings(&data, 0.05, 2.5, 1);
+
+        assert_eq!(peaks.len(), 1);
+        assert_eq!(peaks[0].position, 1.0);
+    }
+
+    #[test]
+    fn test_requested_distance_suppresses_nearby_peaks() {
+        let data = array![0.0, 3.0, 0.0, 2.5, 0.0];
+        let peaks = detect_peaks_with_settings(&data, 0.05, 0.0, 4);
+
+        assert_eq!(peaks.len(), 1);
+        assert_eq!(peaks[0].position, 1.0);
     }
 }
