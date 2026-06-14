@@ -44,7 +44,8 @@ fn process_signal<'py>(
     prominence: f64,
     distance: usize,
 ) -> PyResult<Bound<'py, PyDict>> {
-    let mut signal = ndarray::Array1::from_vec(data);
+    // Sanitize once at the Python boundary so every filter choice reaches FFT safely.
+    let mut signal = signal::filters::sanitize_signal(&ndarray::Array1::from_vec(data));
 
     // 1. Фильтрация
     signal = match filter_type.to_lowercase().as_str() {

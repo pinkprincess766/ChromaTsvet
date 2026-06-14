@@ -21,4 +21,3 @@ log = "0.4"
 env_logger = "0.11"
 
 medians = "3.0"
-savgol-rs = "0.1"

@@ -22,6 +22,9 @@ pub fn detect_peaks_with_settings(
         return vec![];
     }
 
+    // Peak math assumes an ordered finite signal; repair invalid samples first.
+    let cleaned = super::filters::sanitize_signal(signal);
+    let signal = &cleaned;
     let finite_values: Vec<f64> = signal.iter().copied().filter(|v| v.is_finite()).collect();
     if finite_values.len() < 3 {
         return vec![];
@@ -52,23 +55,24 @@ pub fn detect_peaks_with_settings(
 
     let mean = finite_values.iter().sum::<f64>() / finite_values.len() as f64;
     let noise = estimate_noise(&finite_values, mean);
-    let min_prominence = if threshold_factor <= 1.0 {
-        // Treat small thresholds as a soft fraction of the range. The 0.5
-        // factor keeps the detector usable on short or baseline-corrected
-        // spectra where prominence can be compressed.
-        dynamic_range * threshold_factor.max(0.0) * 0.5
+    let threshold_factor = if threshold_factor.is_finite() {
+        threshold_factor.max(0.0)
     } else {
-        noise * threshold_factor * 0.5
+        0.0
     };
-    let automatic_prominence = min_prominence
-        .max(dynamic_range * 0.01)
-        .min(dynamic_range * 0.25);
     let requested_prominence = if requested_prominence.is_finite() {
         requested_prominence.max(0.0)
     } else {
         0.0
     };
-    let min_prominence = automatic_prominence.max(requested_prominence);
+    // `threshold_factor` is a sensitivity coefficient for the noise estimate:
+    // smaller values admit more peaks, while larger values require more prominence.
+    // An explicitly requested prominence replaces this automatic threshold.
+    let min_prominence = if requested_prominence > 0.0 {
+        requested_prominence
+    } else {
+        noise * threshold_factor
+    };
     let min_distance = if requested_distance == 0 {
         (signal.len() / 500).max(1)
     } else {
@@ -301,11 +305,52 @@ mod tests {
     }
 
     #[test]
+    fn test_requested_prominence_replaces_automatic_threshold() {
+        let data = array![0.0, 3.0, 0.0, 0.0, 2.0, 0.0];
+
+        let peaks = detect_peaks_with_settings(&data, 100.0, 1.5, 1);
+
+        assert_eq!(peaks.len(), 2);
+    }
+
+    #[test]
+    fn test_lower_threshold_finds_more_peaks() {
+        let data = array![0.0, 1.0, 0.0, 0.0, 3.0, 0.0, 0.0, 0.6, 0.0];
+
+        let soft = detect_peaks_with_settings(&data, 0.05, 0.0, 1);
+        let strict = detect_peaks_with_settings(&data, 2.0, 0.0, 1);
+
+        assert!(soft.len() > strict.len());
+        assert_eq!(strict.len(), 1);
+    }
+
+    #[test]
     fn test_requested_distance_suppresses_nearby_peaks() {
         let data = array![0.0, 3.0, 0.0, 2.5, 0.0];
         let peaks = detect_peaks_with_settings(&data, 0.05, 0.0, 4);
 
         assert_eq!(peaks.len(), 1);
         assert_eq!(peaks[0].position, 1.0);
+    }
+
+    #[test]
+    fn test_peak_detection_sanitizes_mixed_invalid_values() {
+        let data = array![0.0, f64::NAN, 1.0, f64::INFINITY, 0.0];
+        let peaks = detect_peaks_adaptive(&data, 0.05);
+
+        assert!(peaks.iter().all(|peak| {
+            peak.position.is_finite()
+                && peak.intensity.is_finite()
+                && peak.width.is_finite()
+                && peak.area.is_finite()
+                && peak.snr.is_finite()
+        }));
+    }
+
+    #[test]
+    fn test_peak_detection_handles_short_signals() {
+        assert!(detect_peaks_adaptive(&Array1::zeros(0), 0.1).is_empty());
+        assert!(detect_peaks_adaptive(&array![1.0], 0.1).is_empty());
+        assert!(detect_peaks_adaptive(&array![1.0, 2.0], 0.1).is_empty());
     }
 }
