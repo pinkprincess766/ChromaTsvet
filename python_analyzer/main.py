@@ -19,9 +19,9 @@ from PIL import Image
 import tempfile
 import os
 
-PROJECT_ROOT = Path(__file__).resolve().parents[1]
-if str(PROJECT_ROOT) not in sys.path:
-    sys.path.insert(0, str(PROJECT_ROOT))
+from paths import ensure_rust_in_path, get_library_db_path
+
+ensure_rust_in_path()
 
 import spectrometer_rust
 import filters
@@ -223,6 +223,18 @@ def apply_app_theme(app, theme, font_family, font_size):
             padding: 7px;
             color: {colors["terminal_text"]};
         }}
+        QWidget#embeddedLogPanel {{
+            background-color: {colors["panel_alt"]};
+            border: 1px solid {colors["border"]};
+            border-radius: 7px;
+        }}
+        QWidget#embeddedLogPanel QPushButton {{
+            min-height: 20px;
+            padding: 3px 9px;
+        }}
+        QWidget#embeddedLogPanel QTextEdit {{
+            background-color: {colors["terminal_bg"]};
+        }}
         QStatusBar {{
             background-color: {colors["panel"]};
             border-top: 1px solid {colors["border"]};
@@ -338,6 +350,35 @@ class SettingsDialog(QDialog):
         self.font_size_spin.blockSignals(False)
 
 
+def log_level_from_entry(entry):
+    for level, label in LOG_LEVEL_LABELS.items():
+        if f"[{label}]" in entry:
+            return level
+    return "info"
+
+
+def append_log_entry(log_view, entry: str, level: str = "info", auto_scroll: bool = True):
+    """Append one colored entry to any ChromaTsvet log view."""
+    scroll_bar = log_view.verticalScrollBar()
+    previous_scroll = scroll_bar.value()
+    cursor = log_view.textCursor()
+    cursor.movePosition(QTextCursor.End)
+    if not log_view.document().isEmpty():
+        cursor.insertText("\n")
+
+    text_format = QTextCharFormat()
+    color = LOG_LEVEL_COLORS.get(level)
+    text_format.setForeground(
+        QColor(color) if color else log_view.palette().color(QPalette.Text)
+    )
+    cursor.insertText(entry, text_format)
+    log_view.setTextCursor(cursor)
+    if auto_scroll:
+        log_view.ensureCursorVisible()
+    else:
+        scroll_bar.setValue(previous_scroll)
+
+
 class LogWindow(QDialog):
     def __init__(self, parent):
         super().__init__(parent)
@@ -355,7 +396,7 @@ class LogWindow(QDialog):
         layout.addWidget(self.log_view)
 
         for entry in parent.log_history:
-            self.append_entry(entry, self._level_from_entry(entry))
+            self.append_entry(entry, log_level_from_entry(entry))
 
         buttons = QHBoxLayout()
         clear_button = QPushButton("Clear log")
@@ -373,26 +414,7 @@ class LogWindow(QDialog):
         self.log_view.moveCursor(QTextCursor.End)
 
     def append_entry(self, entry: str, level: str = "info") -> None:
-        cursor = self.log_view.textCursor()
-        cursor.movePosition(QTextCursor.End)
-        if not self.log_view.document().isEmpty():
-            cursor.insertText("\n")
-
-        text_format = QTextCharFormat()
-        color = LOG_LEVEL_COLORS.get(level)
-        text_format.setForeground(
-            QColor(color) if color else self.log_view.palette().color(QPalette.Text)
-        )
-        cursor.insertText(entry, text_format)
-        self.log_view.setTextCursor(cursor)
-        self.log_view.ensureCursorVisible()
-
-    @staticmethod
-    def _level_from_entry(entry):
-        for level, label in LOG_LEVEL_LABELS.items():
-            if f"[{label}]" in entry:
-                return level
-        return "info"
+        append_log_entry(self.log_view, entry, level)
 
     def clear(self):
         self.log_view.clear()
@@ -578,6 +600,7 @@ class MainWindow(QMainWindow):
         self.btn_add = QPushButton("➕ Add")
         self.btn_restore = QPushButton("♻ Restore library")
         self.btn_export = QPushButton("📄 PDF Report")
+        self.btn_export_peaks = QPushButton("Export Peaks (CSV)")
         self.btn_analysis_settings = QPushButton("Analysis Settings")
         self.btn_log = QPushButton("Log")
         self.btn_settings = QPushButton("⚙ Settings")
@@ -587,6 +610,7 @@ class MainWindow(QMainWindow):
         self.btn_add.clicked.connect(self.add_substance)
         self.btn_restore.clicked.connect(self.restore_database)
         self.btn_export.clicked.connect(self.export_pdf)
+        self.btn_export_peaks.clicked.connect(self.export_peaks_csv)
         self.btn_analysis_settings.clicked.connect(self.open_analysis_settings)
         self.btn_log.clicked.connect(self.open_log)
         self.btn_settings.clicked.connect(self.open_settings)
@@ -602,6 +626,7 @@ class MainWindow(QMainWindow):
         btn_layout.addWidget(self.btn_add)
         btn_layout.addWidget(self.btn_restore)
         btn_layout.addWidget(self.btn_export)
+        btn_layout.addWidget(self.btn_export_peaks)
         btn_layout.addStretch()
         btn_layout.addWidget(self.btn_analysis_settings)
         btn_layout.addWidget(self.btn_log)
@@ -621,6 +646,38 @@ class MainWindow(QMainWindow):
         self.table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
         main_layout.addWidget(self.table)
 
+        self.log_panel = QWidget()
+        self.log_panel.setObjectName("embeddedLogPanel")
+        self.log_panel.setFixedHeight(140)
+        log_layout = QVBoxLayout(self.log_panel)
+        log_layout.setContentsMargins(8, 6, 8, 8)
+        log_layout.setSpacing(5)
+
+        log_controls = QHBoxLayout()
+        log_controls.setSpacing(6)
+        log_title = QLabel("Application Log")
+        log_title.setStyleSheet("font-weight: 600;")
+        self.log_clear_button = QPushButton("Clear")
+        self.log_copy_button = QPushButton("Copy")
+        self.log_autoscroll_checkbox = QCheckBox("Auto-scroll")
+        self.log_autoscroll_checkbox.setChecked(True)
+        self.log_clear_button.clicked.connect(self.clear_log)
+        self.log_copy_button.clicked.connect(self.copy_embedded_log)
+        log_controls.addWidget(log_title)
+        log_controls.addStretch()
+        log_controls.addWidget(self.log_autoscroll_checkbox)
+        log_controls.addWidget(self.log_copy_button)
+        log_controls.addWidget(self.log_clear_button)
+        log_layout.addLayout(log_controls)
+
+        self.embedded_log_view = QTextEdit()
+        self.embedded_log_view.setReadOnly(True)
+        self.embedded_log_view.setMinimumHeight(78)
+        self.embedded_log_view.setFont(QFontDatabase.systemFont(QFontDatabase.FixedFont))
+        self.embedded_log_view.setAccessibleName("Application log")
+        log_layout.addWidget(self.embedded_log_view)
+        main_layout.addWidget(self.log_panel)
+
         self.status_bar = QStatusBar(self)
         self.status_bar.setSizeGripEnabled(False)
         self.status_source_label = QLabel("No file loaded")
@@ -629,6 +686,7 @@ class MainWindow(QMainWindow):
         self.setStatusBar(self.status_bar)
 
         self._update_file_display()
+        self._update_export_actions()
 
         self.log("Application started", status_message="Ready")
 
@@ -794,6 +852,10 @@ class MainWindow(QMainWindow):
     def apply_ui_settings(self):
         apply_app_theme(QApplication.instance(), self.theme, self.font_family, self.font_size)
         self._configure_plot()
+        fixed_font = QFontDatabase.systemFont(QFontDatabase.FixedFont)
+        fixed_font.setPointSize(max(9, self.font_size - 2))
+        self.embedded_log_view.setFont(fixed_font)
+        self._refresh_embedded_log()
         if self.current_data is not None:
             self.run_analysis()
 
@@ -812,6 +874,12 @@ class MainWindow(QMainWindow):
         entry = f"[{timestamp}] [{label}] {msg}"
         self.log_history.append(entry)
         self.status_bar.showMessage(status_message or msg)
+        append_log_entry(
+            self.embedded_log_view,
+            entry,
+            normalized_level,
+            auto_scroll=self.log_autoscroll_checkbox.isChecked(),
+        )
         if self.log_window is not None:
             self.log_window.append_entry(entry, normalized_level)
 
@@ -847,9 +915,26 @@ class MainWindow(QMainWindow):
 
     def clear_log(self):
         self.log_history.clear()
+        self.embedded_log_view.clear()
         if self.log_window is not None:
             self.log_window.clear()
         self.status_bar.showMessage("Log cleared")
+
+    def copy_embedded_log(self):
+        QApplication.clipboard().setText(self.embedded_log_view.toPlainText())
+
+    def _refresh_embedded_log(self):
+        self.embedded_log_view.clear()
+        for entry in self.log_history:
+            append_log_entry(
+                self.embedded_log_view,
+                entry,
+                log_level_from_entry(entry),
+                auto_scroll=False,
+            )
+        if self.log_autoscroll_checkbox.isChecked():
+            self.embedded_log_view.moveCursor(QTextCursor.End)
+            self.embedded_log_view.ensureCursorVisible()
 
     def display_source_name(self):
         if self.current_file_name:
@@ -872,6 +957,14 @@ class MainWindow(QMainWindow):
         self.status_source_label.setText("No file loaded")
         self.status_source_label.setToolTip("Open a CSV or TXT spectrum file")
         self.setWindowTitle(WINDOW_TITLE)
+
+    def _update_export_actions(self):
+        peaks = (
+            self.current_result.get("peaks", [])
+            if self.current_result is not None
+            else []
+        )
+        self.btn_export_peaks.setEnabled(bool(peaks))
 
     def load_file(self):
         file, _ = QFileDialog.getOpenFileName(self, "Open spectrum", "", "CSV (*.csv);;TXT (*.txt)")
@@ -998,6 +1091,9 @@ class MainWindow(QMainWindow):
         if self.current_data is None:
             return
 
+        self.current_result = None
+        self._update_export_actions()
+
         try:
             filtered_data = filters.apply_filter(
                 self.current_data,
@@ -1065,7 +1161,7 @@ class MainWindow(QMainWindow):
                 self.table.setItem(row, 0, QTableWidgetItem(match.substance_name))
                 self.table.setItem(row, 1, QTableWidgetItem(match.formula))
                 self.table.setItem(row, 2, QTableWidgetItem(f"{match.score:.3f}"))
-                self.table.setItem(row, 3, QTableWidgetItem(str(match.matched_peaks)))
+                self.table.setItem(row, 3, QTableWidgetItem(str(match.matched_points)))
         except Exception as exc:
             self._show_error(
                 "Analysis error",
@@ -1077,6 +1173,7 @@ class MainWindow(QMainWindow):
             return
 
         self.current_result = result
+        self._update_export_actions()
 
         source_name = self.current_file_name or "Demo data"
         self.log(
@@ -1342,6 +1439,65 @@ class MainWindow(QMainWindow):
                         status_message="Temporary report file could not be removed",
                         level="warning",
                     )
+
+    def export_peaks_csv(self):
+        if self.current_result is None:
+            self._show_warning(
+                "No analysis results",
+                "Analyze a spectrum before exporting detected peaks.",
+                status_message="No analysis results to export",
+            )
+            self._update_export_actions()
+            return
+
+        peaks = self.current_result.get("peaks", [])
+        if not peaks:
+            self._show_warning(
+                "No detected peaks",
+                "The current analysis has no detected peaks to export.",
+                status_message="No detected peaks to export",
+            )
+            self._update_export_actions()
+            return
+
+        file, _ = QFileDialog.getSaveFileName(
+            self,
+            "Export detected peaks",
+            f"peaks_{datetime.now():%Y%m%d_%H%M}.csv",
+            "CSV (*.csv)",
+        )
+        if not file:
+            return
+
+        try:
+            with open(file, "w", newline="", encoding="utf-8") as csv_file:
+                writer = csv.writer(csv_file)
+                writer.writerow(["position", "intensity", "width", "area", "snr"])
+                for peak in peaks:
+                    writer.writerow(
+                        [peak.position, peak.intensity, peak.width, peak.area, peak.snr]
+                    )
+
+            QMessageBox.information(self, "Success", f"Peak list saved:\n{file}")
+            self.log(
+                f"Peak list exported: {file} ({len(peaks)} peaks)",
+                status_message=f"Peak list saved: {Path(file).name}",
+            )
+        except PermissionError as exc:
+            self._show_error(
+                "Could not save peak list",
+                "The peak list could not be saved because access to the selected location was denied.",
+                exception=exc,
+                status_message="Peak list was not saved",
+            )
+        except Exception as exc:
+            self._show_error(
+                "Could not export peak list",
+                "The detected peaks could not be exported. Choose another location and try again.",
+                exception=exc,
+                critical=True,
+                status_message="Peak list export failed",
+            )
 
 
 if __name__ == "__main__":

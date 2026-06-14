@@ -4,19 +4,19 @@ import numpy as np
 from typing import List
 from dataclasses import dataclass
 from pathlib import Path
+from paths import get_library_db_path
 
 @dataclass
 class MatchResult:
     substance_name: str
     formula: str = ""
     score: float = 0.0
-    matched_peaks: int = 0
+    matched_points: int = 0
 
 class SpectrumIdentifier:
     def __init__(self, db_path=None):
         if db_path is None:
-            project_root = Path(__file__).resolve().parents[2]
-            db_path = project_root / "library.db"
+            db_path = get_library_db_path()
 
         self.db_path = Path(db_path)
         self.conn = sqlite3.connect(self.db_path)
@@ -103,7 +103,7 @@ class SpectrumIdentifier:
                 formula=formula or "",
                 score=round(float(score), 3),
                 # Current model compares spectrum points, not detected peak identities.
-                matched_peaks=min_len
+                matched_points=min_len
             ))
 
         return sorted(results, key=lambda x: x.score, reverse=True)
