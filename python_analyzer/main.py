@@ -1,7 +1,23 @@
-﻿import sys
-import numpy as np
-import csv
+﻿import csv
+from datetime import datetime
+import io
 import json
+import logging
+import os
+from pathlib import Path
+import re
+import sys
+import tempfile
+
+if __package__:
+    from python_analyzer.core.logging_config import setup_logging
+else:
+    from core.logging_config import setup_logging
+
+setup_logging()
+logger = logging.getLogger("chromatsvet.gui")
+
+import numpy as np
 from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, 
                            QPushButton, QTableWidget, QTableWidgetItem, QLabel, 
                            QFileDialog, QHBoxLayout, QMessageBox, QInputDialog, QTextEdit,
@@ -11,21 +27,21 @@ from PyQt5.QtCore import Qt, QSettings
 from PyQt5.QtGui import (QFont, QColor, QPalette, QFontDatabase, QTextCharFormat,
                          QTextCursor)
 import pyqtgraph as pg
-from datetime import datetime
-from pathlib import Path
 from reportlab.lib.pagesizes import A4
 from reportlab.pdfgen import canvas
 from PIL import Image
-import tempfile
-import os
 
 from paths import ensure_rust_in_path, get_library_db_path
 
 ensure_rust_in_path()
 
-import spectrometer_rust
-import filters
-from python_analyzer.core.identification import SpectrumIdentifier
+try:
+    import spectrometer_rust
+    import filters
+    from python_analyzer.core.identification import SpectrumIdentifier
+except Exception:
+    logger.exception("Failed to import the application backend")
+    raise
 
 APP_ORG = "ChromaTsvet"
 APP_NAME = "ChromaTsvet"
@@ -41,6 +57,26 @@ DEFAULT_FILTER_TYPE = "median"
 LOG_LEVEL_LABELS = {"info": "INFO", "warning": "WARN", "error": "ERROR"}
 LOG_LEVEL_COLORS = {"warning": "#F5A623", "error": "#FF5C5C"}
 FONT_CANDIDATES = ["Inter", "Roboto", "IBM Plex Sans", ".AppleSystemUIFont", "Segoe UI"]
+INTENSITY_COLUMN_NAMES = {
+    "intensity",
+    "intensityau",
+    "amplitude",
+    "signal",
+    "value",
+    "response",
+    "count",
+    "counts",
+    "absorbance",
+    "y",
+    "интенсивность",
+    "амплитуда",
+    "сигнал",
+    "значение",
+}
+
+
+class SpectrumFileFormatError(ValueError):
+    """Raised when a spectrum table has an unsupported or ambiguous layout."""
 
 
 def app_settings():
@@ -67,7 +103,8 @@ def saved_font_family(settings):
 def saved_font_size(settings):
     try:
         return max(9, min(16, int(settings.value("ui/font_size", DEFAULT_FONT_SIZE))))
-    except (TypeError, ValueError):
+    except (TypeError, ValueError) as exc:
+        logger.warning("Invalid saved font size; using the default: %s", exc)
         return DEFAULT_FONT_SIZE
 
 
@@ -81,24 +118,33 @@ def saved_bool(settings, key, default):
 def saved_float(settings, key, default, minimum, maximum):
     try:
         return max(minimum, min(maximum, float(settings.value(key, default))))
-    except (TypeError, ValueError):
+    except (TypeError, ValueError) as exc:
+        logger.warning("Invalid saved numeric setting %s; using the default: %s", key, exc)
         return default
 
 
 def saved_int(settings, key, default, minimum, maximum):
     try:
         return max(minimum, min(maximum, int(settings.value(key, default))))
-    except (TypeError, ValueError):
+    except (TypeError, ValueError) as exc:
+        logger.warning("Invalid saved integer setting %s; using the default: %s", key, exc)
         return default
 
 
 def normalized_filter_settings(filter_type, filter_params=None):
     try:
         return filters.normalize_filter_settings(filter_type, filter_params)
-    except filters.FilterError:
+    except filters.FilterError as exc:
+        logger.warning("Invalid saved filter parameters for %r: %s", filter_type, exc)
         try:
             return filters.normalize_filter_settings(filter_type)
-        except filters.FilterError:
+        except filters.FilterError as fallback_exc:
+            logger.warning(
+                "Invalid saved filter type %r; using %s: %s",
+                filter_type,
+                DEFAULT_FILTER_TYPE,
+                fallback_exc,
+            )
             return filters.normalize_filter_settings(DEFAULT_FILTER_TYPE)
 
 
@@ -109,7 +155,8 @@ def saved_filter_settings(settings):
     if isinstance(stored_params, str):
         try:
             filter_params = json.loads(stored_params) if stored_params else {}
-        except (TypeError, ValueError):
+        except (TypeError, ValueError) as exc:
+            logger.warning("Invalid saved filter parameter JSON; ignoring it: %s", exc)
             filter_params = {}
     elif isinstance(stored_params, dict):
         filter_params = stored_params
@@ -639,7 +686,9 @@ class MainWindow(QMainWindow):
 
         self.table = QTableWidget()
         self.table.setColumnCount(4)
-        self.table.setHorizontalHeaderLabels(["Substance", "Formula", "Score", "Matched points"])
+        self.table.setHorizontalHeaderLabels(
+            ["Substance", "Formula", "Score", "Compared points"]
+        )
         self.table.setAlternatingRowColors(True)
         self.table.verticalHeader().setVisible(False)
         self.table.horizontalHeader().setStretchLastSection(True)
@@ -859,7 +908,13 @@ class MainWindow(QMainWindow):
         if self.current_data is not None:
             self.run_analysis()
 
-    def log(self, msg: str, status_message=None, level: str = "info") -> None:
+    def log(
+        self,
+        msg: str,
+        status_message=None,
+        level: str = "info",
+        exc_info: bool = False,
+    ) -> None:
         """Add a timestamped log entry and update the status bar.
 
         Supported levels are ``info``, ``warning``, and ``error``. Unknown
@@ -872,6 +927,17 @@ class MainWindow(QMainWindow):
         timestamp = datetime.now().strftime("%H:%M:%S")
         label = LOG_LEVEL_LABELS[normalized_level]
         entry = f"[{timestamp}] [{label}] {msg}"
+        if exc_info:
+            logger.exception(msg)
+        else:
+            logger.log(
+                {
+                    "info": logging.INFO,
+                    "warning": logging.WARNING,
+                    "error": logging.ERROR,
+                }[normalized_level],
+                msg,
+            )
         self.log_history.append(entry)
         self.status_bar.showMessage(status_message or msg)
         append_log_entry(
@@ -909,6 +975,7 @@ class MainWindow(QMainWindow):
             log_message,
             status_message=status_message or user_message,
             level="error",
+            exc_info=exception is not None,
         )
         message_box = QMessageBox.critical if critical else QMessageBox.warning
         message_box(self, title, user_message)
@@ -983,6 +1050,14 @@ class MainWindow(QMainWindow):
                 return
 
             data, skipped_rows = self._read_spectrum_file(file)
+        except SpectrumFileFormatError as exc:
+            self._show_warning(
+                "Unsupported spectrum format",
+                str(exc),
+                log_message=f"Invalid spectrum file format in {file_path}: {exc}",
+                status_message="Unsupported spectrum file format",
+            )
+            return
         except (OSError, UnicodeError, csv.Error) as exc:
             self._show_error(
                 "Could not open file",
@@ -1043,38 +1118,114 @@ class MainWindow(QMainWindow):
         data = []
         skipped_rows = []
 
-        with open(file_path, 'r', encoding='utf-8-sig', newline='') as f:
-            reader = csv.reader(f)
-            for line_no, row in enumerate(reader, start=1):
-                value, parsed = self._first_number(row)
-                if value is None:
-                    continue
+        with open(file_path, "r", encoding="utf-8-sig", newline="") as spectrum_file:
+            text = spectrum_file.read()
 
-                if parsed is None:
-                    skipped_rows.append((line_no, value))
-                    continue
+        delimiter = self._detect_spectrum_delimiter(text)
+        if delimiter is None:
+            records = [
+                (line_no, [line.strip()])
+                for line_no, line in enumerate(text.splitlines(), start=1)
+                if line.strip()
+            ]
+        else:
+            reader = csv.reader(io.StringIO(text), delimiter=delimiter, strict=True)
+            records = [
+                (reader.line_num, row)
+                for row in reader
+                if any(cell.strip() for cell in row)
+            ]
 
-                data.append(parsed)
+        if not records:
+            return data, skipped_rows
+
+        column_count = len(records[0][1])
+        for line_no, row in records[1:]:
+            if len(row) != column_count:
+                raise SpectrumFileFormatError(
+                    f"Line {line_no} has {len(row)} columns; expected {column_count}. "
+                    "Use one consistent delimiter throughout the file."
+                )
+
+        intensity_column, first_data_row = self._select_intensity_column(
+            records, column_count
+        )
+        for line_no, row in records[first_data_row:]:
+            value = row[intensity_column].strip()
+            parsed = self._parse_number(value) if value else None
+            if parsed is None:
+                skipped_rows.append((line_no, value or "<empty>"))
+                continue
+            data.append(parsed)
 
         return data, skipped_rows
 
-    def _first_number(self, row):
-        if not row:
-            return None, None
+    def _detect_spectrum_delimiter(self, text):
+        lines = [line for line in text.splitlines() if line.strip()]
+        if not lines:
+            return None
 
-        first_value = None
-        for cell in row:
-            value = cell.strip()
-            if not value:
-                continue
-            if first_value is None:
-                first_value = value
+        sample = "\n".join(lines[:50])
+        try:
+            delimiter = csv.Sniffer().sniff(sample, delimiters=",;\t").delimiter
+        except csv.Error:
+            delimiter = max(
+                ("\t", ";", ","),
+                key=lambda candidate: sample.count(candidate),
+            )
+            if delimiter not in sample:
+                return None
 
-            parsed = self._parse_number(value)
-            if parsed is not None:
-                return value, parsed
+        decimal_comma_pattern = (
+            r"\s*[+-]?(?:\d+,\d*|,\d+)(?:[eE][+-]?\d+)?\s*"
+        )
+        decimal_lines = lines
+        if self._normalize_column_name(lines[0]) in INTENSITY_COLUMN_NAMES:
+            decimal_lines = lines[1:]
+        if delimiter == "," and decimal_lines and all(
+            re.fullmatch(decimal_comma_pattern, line) for line in decimal_lines
+        ):
+            # A decimal-comma series is ambiguous with a headerless 2-column
+            # CSV. Prefer the locale-aware legacy single-column format.
+            return None
+        return delimiter
 
-        return first_value, None
+    def _select_intensity_column(self, records, column_count):
+        first_row = records[0][1]
+        has_header = any(
+            value.strip() and self._parse_number(value.strip()) is None
+            for value in first_row
+        )
+
+        if column_count == 1:
+            return 0, 1 if has_header else 0
+
+        if not has_header:
+            if column_count == 2:
+                return 1, 0
+            raise SpectrumFileFormatError(
+                "A table without a header must contain exactly two columns "
+                "(position and intensity)."
+            )
+
+        intensity_columns = [
+            index
+            for index, value in enumerate(first_row)
+            if self._normalize_column_name(value) in INTENSITY_COLUMN_NAMES
+        ]
+        if len(intensity_columns) != 1:
+            available_columns = ", ".join(
+                value.strip() or "<empty>" for value in first_row
+            )
+            raise SpectrumFileFormatError(
+                "Could not identify one intensity column. Use a header such as "
+                f"'intensity', 'amplitude', 'signal', or 'value'. Found: {available_columns}."
+            )
+        return intensity_columns[0], 1
+
+    @staticmethod
+    def _normalize_column_name(value):
+        return re.sub(r"[^\w]+", "", value.casefold(), flags=re.UNICODE)
 
     def _parse_number(self, value):
         try:
@@ -1161,7 +1312,12 @@ class MainWindow(QMainWindow):
                 self.table.setItem(row, 0, QTableWidgetItem(match.substance_name))
                 self.table.setItem(row, 1, QTableWidgetItem(match.formula))
                 self.table.setItem(row, 2, QTableWidgetItem(f"{match.score:.3f}"))
-                self.table.setItem(row, 3, QTableWidgetItem(str(match.matched_points)))
+                compared_points = getattr(
+                    match,
+                    "compared_points",
+                    getattr(match, "matched_points", 0),
+                )
+                self.table.setItem(row, 3, QTableWidgetItem(str(compared_points)))
         except Exception as exc:
             self._show_error(
                 "Analysis error",
@@ -1386,7 +1542,7 @@ class MainWindow(QMainWindow):
             c.drawString(margin, y, "Substance")
             c.drawString(margin + 170, y, "Formula")
             c.drawString(margin + 270, y, "Score")
-            c.drawString(margin + 340, y, "Matched points")
+            c.drawString(margin + 340, y, "Compared points")
             y -= 13
             c.line(margin, y, width - margin, y)
             y -= 12
@@ -1400,11 +1556,11 @@ class MainWindow(QMainWindow):
                 name = self.table.item(row, 0).text()
                 formula = self.table.item(row, 1).text()
                 score = self.table.item(row, 2).text()
-                matched_points = self.table.item(row, 3).text()
+                compared_points = self.table.item(row, 3).text()
                 c.drawString(margin, y, name[:28])
                 c.drawString(margin + 170, y, formula[:14])
                 c.drawString(margin + 270, y, score)
-                c.drawString(margin + 340, y, matched_points)
+                c.drawString(margin + 340, y, compared_points)
                 y -= 14
 
             c.save()

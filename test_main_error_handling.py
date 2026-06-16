@@ -1,5 +1,6 @@
 import csv
 from pathlib import Path
+import sqlite3
 from tempfile import TemporaryDirectory
 from types import SimpleNamespace
 import unittest
@@ -10,7 +11,7 @@ from PyQt5.QtCore import QSettings
 from PyQt5.QtWidgets import QApplication, QMessageBox
 
 import python_analyzer.main as main
-from python_analyzer.core.identification import SpectrumIdentifier
+from python_analyzer.core.identification import MatchResult, SpectrumIdentifier
 
 
 class FakeIdentifier:
@@ -128,6 +129,136 @@ class MainWindowErrorHandlingTest(unittest.TestCase):
         self.assertIsNone(self.window._parse_number("inf"))
         self.assertEqual(self.window._parse_number("1,25"), 1.25)
 
+    def test_parser_keeps_legacy_single_column_files(self):
+        with TemporaryDirectory() as temp_dir:
+            file_path = Path(temp_dir) / "spectrum.txt"
+            file_path.write_text("0.1\n0.3\n1.25\n", encoding="utf-8")
+
+            data, skipped_rows = self.window._read_spectrum_file(file_path)
+
+        self.assertEqual(data, [0.1, 0.3, 1.25])
+        self.assertEqual(skipped_rows, [])
+
+    def test_parser_reads_named_intensity_column_from_comma_csv(self):
+        with TemporaryDirectory() as temp_dir:
+            file_path = Path(temp_dir) / "spectrum.csv"
+            file_path.write_text(
+                "wavelength,intensity\n400,1.5\n401,2.75\n",
+                encoding="utf-8",
+            )
+
+            data, skipped_rows = self.window._read_spectrum_file(file_path)
+
+        self.assertEqual(data, [1.5, 2.75])
+        self.assertEqual(skipped_rows, [])
+
+    def test_parser_reads_tab_delimited_named_intensity_column(self):
+        with TemporaryDirectory() as temp_dir:
+            file_path = Path(temp_dir) / "spectrum.txt"
+            file_path.write_text(
+                "time\tsignal\n0\t2.5\n1\t3.5\n",
+                encoding="utf-8",
+            )
+
+            data, skipped_rows = self.window._read_spectrum_file(file_path)
+
+        self.assertEqual(data, [2.5, 3.5])
+        self.assertEqual(skipped_rows, [])
+
+    def test_parser_reads_semicolon_file_with_decimal_commas(self):
+        with TemporaryDirectory() as temp_dir:
+            file_path = Path(temp_dir) / "spectrum.csv"
+            file_path.write_text(
+                "wavelength;intensity\n400,0;1,25\n401,0;2,50\n",
+                encoding="utf-8",
+            )
+
+            data, skipped_rows = self.window._read_spectrum_file(file_path)
+
+        self.assertEqual(data, [1.25, 2.5])
+        self.assertEqual(skipped_rows, [])
+
+    def test_parser_reads_single_column_decimal_commas_with_header(self):
+        with TemporaryDirectory() as temp_dir:
+            file_path = Path(temp_dir) / "spectrum.txt"
+            file_path.write_text(
+                "intensity\n1,25\n2,50\n",
+                encoding="utf-8",
+            )
+
+            data, skipped_rows = self.window._read_spectrum_file(file_path)
+
+        self.assertEqual(data, [1.25, 2.5])
+        self.assertEqual(skipped_rows, [])
+
+    def test_parser_uses_second_column_for_headerless_two_column_table(self):
+        with TemporaryDirectory() as temp_dir:
+            file_path = Path(temp_dir) / "spectrum.txt"
+            file_path.write_text("0\t5.0\n1\t7.5\n", encoding="utf-8")
+
+            data, skipped_rows = self.window._read_spectrum_file(file_path)
+
+        self.assertEqual(data, [5.0, 7.5])
+        self.assertEqual(skipped_rows, [])
+
+    def test_parser_rejects_inconsistent_column_counts(self):
+        with TemporaryDirectory() as temp_dir:
+            file_path = Path(temp_dir) / "broken.csv"
+            file_path.write_text(
+                "position;intensity\n0;1.0\n1;2.0;unexpected\n",
+                encoding="utf-8",
+            )
+
+            with self.assertRaisesRegex(main.SpectrumFileFormatError, "3 columns"):
+                self.window._read_spectrum_file(file_path)
+
+    def test_parser_rejects_table_without_intensity_column(self):
+        with TemporaryDirectory() as temp_dir:
+            file_path = Path(temp_dir) / "ambiguous.csv"
+            file_path.write_text(
+                "wavelength,temperature\n400,20\n401,21\n",
+                encoding="utf-8",
+            )
+
+            with self.assertRaisesRegex(
+                main.SpectrumFileFormatError, "Could not identify"
+            ):
+                self.window._read_spectrum_file(file_path)
+
+    def test_parser_rejects_malformed_csv_quotes(self):
+        with TemporaryDirectory() as temp_dir:
+            file_path = Path(temp_dir) / "broken.csv"
+            file_path.write_text(
+                'position,intensity\n0,"1.0\n',
+                encoding="utf-8",
+            )
+
+            with self.assertRaises(csv.Error):
+                self.window._read_spectrum_file(file_path)
+
+    def test_load_file_shows_format_warning_for_invalid_table(self):
+        with TemporaryDirectory() as temp_dir:
+            file_path = Path(temp_dir) / "broken.csv"
+            file_path.write_text(
+                "position;intensity\n0;1.0\n1;2.0;unexpected\n",
+                encoding="utf-8",
+            )
+
+            with (
+                patch.object(
+                    main.QFileDialog,
+                    "getOpenFileName",
+                    return_value=(str(file_path), ""),
+                ),
+                patch.object(
+                    QMessageBox, "warning", return_value=QMessageBox.Ok
+                ) as warning,
+            ):
+                self.window.load_file()
+
+        warning.assert_called_once()
+        self.assertIn("Invalid spectrum file format", self.window.log_history[-1])
+
     def test_database_failure_is_reported(self):
         self.window.identifier.clear_database = lambda: False
 
@@ -205,23 +336,60 @@ class MainWindowErrorHandlingTest(unittest.TestCase):
         self.assertEqual(rows[1], ["124.0", "0.854", "12.3", "4.21", "18.7"])
         self.assertIn("Peak list exported:", self.window.log_history[-1])
 
-    def test_identification_table_uses_matched_points(self):
+    def test_identification_table_uses_compared_points(self):
         self.window.identifier.find_matches = lambda spectrum: [
             SimpleNamespace(
                 substance_name="Test",
                 formula="T",
                 score=0.75,
-                matched_points=2,
+                compared_points=2,
             )
         ]
 
         self.window.run_analysis()
 
-        self.assertEqual(self.window.table.horizontalHeaderItem(3).text(), "Matched points")
+        self.assertEqual(
+            self.window.table.horizontalHeaderItem(3).text(), "Compared points"
+        )
         self.assertEqual(self.window.table.item(0, 3).text(), "2")
+
+    def test_identification_table_accepts_legacy_matched_points_result(self):
+        self.window.identifier.find_matches = lambda spectrum: [
+            SimpleNamespace(
+                substance_name="Legacy",
+                formula="L",
+                score=0.5,
+                matched_points=3,
+            )
+        ]
+
+        self.window.run_analysis()
+
+        self.assertEqual(self.window.table.item(0, 3).text(), "3")
 
 
 class IdentifierErrorPropagationTest(unittest.TestCase):
+    def test_match_result_accepts_legacy_matched_points_keyword(self):
+        result = MatchResult("Reference", matched_points=4)
+
+        self.assertEqual(result.compared_points, 4)
+        self.assertEqual(result.matched_points, 4)
+
+    def test_database_connection_failure_is_logged_and_raised(self):
+        with (
+            patch(
+                "python_analyzer.core.identification.sqlite3.connect",
+                side_effect=sqlite3.OperationalError("database unavailable"),
+            ),
+            patch(
+                "python_analyzer.core.identification.logger.exception"
+            ) as log_exception,
+        ):
+            with self.assertRaisesRegex(sqlite3.OperationalError, "database unavailable"):
+                SpectrumIdentifier("/unavailable/library.db")
+
+        log_exception.assert_called_once()
+
     def test_find_matches_reports_compared_points(self):
         identifier = SpectrumIdentifier(":memory:")
         try:
@@ -230,8 +398,8 @@ class IdentifierErrorPropagationTest(unittest.TestCase):
         finally:
             identifier.conn.close()
 
+        self.assertEqual(matches[0].compared_points, 3)
         self.assertEqual(matches[0].matched_points, 3)
-        self.assertFalse(hasattr(matches[0], "matched_peaks"))
 
     def test_restore_default_propagates_clear_failure(self):
         identifier = SpectrumIdentifier.__new__(SpectrumIdentifier)
