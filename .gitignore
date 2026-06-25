@@ -56,3 +56,4 @@ test_*.txt
 # OS metadata
 .DS_Store
 Thumbs.db
+AGENTS.md
