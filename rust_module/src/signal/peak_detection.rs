@@ -1,6 +1,9 @@
 use crate::types::Peak;
 use ndarray::prelude::*;
 
+const GAUSSIAN_AREA_FACTOR: f64 = 1.0645;
+const FALLBACK_HALF_WINDOW: usize = 3;
+
 struct PeakCandidate {
     index: usize,
     intensity: f64,
@@ -207,15 +210,26 @@ fn scan_min_until_higher(
 
 fn build_peak(signal: &Array1<f64>, candidate: PeakCandidate, noise: f64) -> Peak {
     let baseline_level = candidate.intensity - candidate.prominence;
+    let peak_height = candidate.intensity - baseline_level;
     let half_height = baseline_level + candidate.prominence * 0.5;
     let left = half_height_crossing(signal, candidate.index, half_height, true);
     let right = half_height_crossing(signal, candidate.index, half_height, false);
-    let area = integrate_peak(signal, left, right, baseline_level);
+    let width = match (left, right) {
+        (Some(left), Some(right)) if right > left => right - left,
+        _ => 0.0,
+    };
+
+    let (integration_left, integration_right) =
+        integration_bounds(signal.len(), candidate.index, left, right);
+    let numeric_area =
+        integrate_peak_trapezoidal(signal, integration_left, integration_right, baseline_level);
+    let area = gaussian_peak_area(peak_height, width).unwrap_or(numeric_area);
 
     Peak {
         position: candidate.index as f64,
+        frequency: 0.0,
         intensity: candidate.intensity,
-        width: (right as f64 - left as f64).max(1.0),
+        width,
         area,
         snr: candidate.prominence / noise,
     }
@@ -226,38 +240,116 @@ fn half_height_crossing(
     peak_idx: usize,
     half_height: f64,
     scan_left: bool,
-) -> usize {
+) -> Option<f64> {
     if scan_left {
-        for i in (0..peak_idx).rev() {
-            if !signal[i].is_finite() || signal[i] <= half_height {
-                return i;
+        for i in (1..=peak_idx).rev() {
+            let left = signal[i - 1];
+            let right = signal[i];
+            if !(left.is_finite() && right.is_finite()) {
+                return None;
+            }
+            if left <= half_height && right >= half_height {
+                return interpolate_crossing(i - 1, left, i, right, half_height);
             }
         }
-        0
+        (signal[0] <= half_height).then_some(0.0)
     } else {
-        for i in peak_idx + 1..signal.len() {
-            if !signal[i].is_finite() || signal[i] <= half_height {
-                return i;
+        for i in peak_idx..signal.len().saturating_sub(1) {
+            let left = signal[i];
+            let right = signal[i + 1];
+            if !(left.is_finite() && right.is_finite()) {
+                return None;
+            }
+            if left >= half_height && right <= half_height {
+                return interpolate_crossing(i, left, i + 1, right, half_height);
             }
         }
-        signal.len() - 1
+        let last_index = signal.len().saturating_sub(1);
+        (signal[last_index] <= half_height).then_some(last_index as f64)
     }
 }
 
-fn integrate_peak(signal: &Array1<f64>, left: usize, right: usize, baseline_level: f64) -> f64 {
+fn interpolate_crossing(
+    left_index: usize,
+    left_value: f64,
+    right_index: usize,
+    right_value: f64,
+    target: f64,
+) -> Option<f64> {
+    let delta = right_value - left_value;
+    if !delta.is_finite() || delta.abs() <= f64::EPSILON {
+        return Some(left_index as f64);
+    }
+
+    let fraction = ((target - left_value) / delta).clamp(0.0, 1.0);
+    Some(left_index as f64 + fraction * (right_index - left_index) as f64)
+}
+
+fn gaussian_peak_area(height: f64, width: f64) -> Option<f64> {
+    if height.is_finite() && width.is_finite() && height > 0.0 && width > 0.0 {
+        Some(height * width * GAUSSIAN_AREA_FACTOR)
+    } else {
+        None
+    }
+}
+
+fn integration_bounds(
+    signal_len: usize,
+    peak_idx: usize,
+    left: Option<f64>,
+    right: Option<f64>,
+) -> (usize, usize) {
+    if signal_len == 0 {
+        return (0, 0);
+    }
+
+    if let (Some(left), Some(right)) = (left, right) {
+        if right > left {
+            let left_index = left.floor().max(0.0) as usize;
+            let right_index = right.ceil().min((signal_len - 1) as f64) as usize;
+            return (left_index, right_index.max(left_index));
+        }
+    }
+
+    let half_window = (signal_len / 100)
+        .max(FALLBACK_HALF_WINDOW)
+        .min(25)
+        .min(signal_len.saturating_sub(1));
+    let left_index = peak_idx.saturating_sub(half_window);
+    let right_index = peak_idx.saturating_add(half_window).min(signal_len - 1);
+    (left_index, right_index)
+}
+
+fn integrate_peak_trapezoidal(
+    signal: &Array1<f64>,
+    left: usize,
+    right: usize,
+    baseline_level: f64,
+) -> f64 {
     if right <= left {
         return 0.0;
     }
 
     let mut area = 0.0;
-    for i in left..=right {
-        let value = signal[i];
-        if value.is_finite() {
-            area += (value - baseline_level).max(0.0);
-        }
+    for i in left..right {
+        let current = baseline_corrected_value(signal[i], baseline_level);
+        let next = baseline_corrected_value(signal[i + 1], baseline_level);
+        area += (current + next) * 0.5;
     }
 
-    area
+    if area.is_finite() {
+        area.max(0.0)
+    } else {
+        0.0
+    }
+}
+
+fn baseline_corrected_value(value: f64, baseline_level: f64) -> f64 {
+    if value.is_finite() {
+        (value - baseline_level).max(0.0)
+    } else {
+        0.0
+    }
 }
 
 #[cfg(test)]
@@ -274,6 +366,43 @@ mod tests {
         assert!(peaks[0].width > 0.0);
         assert!(peaks[0].area > 0.0);
         assert!(peaks[0].snr > 0.0);
+    }
+
+    #[test]
+    fn test_peak_area_uses_gaussian_fwhm_approximation() {
+        let data = array![0.0, 0.5, 1.0, 0.5, 0.0];
+        let peaks = detect_peaks_adaptive(&data, 0.1);
+
+        assert_eq!(peaks.len(), 1);
+        assert!((peaks[0].width - 2.0).abs() < 1e-12);
+        assert!((peaks[0].area - (1.0 * 2.0 * GAUSSIAN_AREA_FACTOR)).abs() < 1e-12);
+    }
+
+    #[test]
+    fn test_gaussian_peak_area_rejects_non_positive_shape() {
+        assert!(gaussian_peak_area(1.0, 0.0).is_none());
+        assert!(gaussian_peak_area(1.0, -1.0).is_none());
+        assert!(gaussian_peak_area(0.0, 1.0).is_none());
+        assert!(gaussian_peak_area(f64::NAN, 1.0).is_none());
+    }
+
+    #[test]
+    fn test_gaussian_peak_area_handles_tiny_positive_width() {
+        let area = gaussian_peak_area(2.0, f64::MIN_POSITIVE).unwrap();
+
+        assert!(area.is_finite());
+        assert!(area > 0.0);
+    }
+
+    #[test]
+    fn test_peak_area_falls_back_to_trapezoid_when_width_is_unknown() {
+        let data = array![5.0, 2.0, 1.0, 0.0];
+        let peaks = detect_peaks_adaptive(&data, 0.1);
+
+        assert_eq!(peaks.len(), 1);
+        assert_eq!(peaks[0].position, 0.0);
+        assert_eq!(peaks[0].width, 0.0);
+        assert!(peaks[0].area > 0.0);
     }
 
     #[test]

@@ -1,7 +1,9 @@
-﻿import sys
-import numpy as np
-import matplotlib.pyplot as plt
+import sys
 from pathlib import Path
+import unittest
+
+import numpy as np
+
 
 PROJECT_ROOT = Path(__file__).resolve().parent
 if str(PROJECT_ROOT) not in sys.path:
@@ -9,47 +11,115 @@ if str(PROJECT_ROOT) not in sys.path:
 
 import spectrometer_rust
 
-print("✅ Rust модуль загружен! Версия:", spectrometer_rust.get_version())
 
-# Лучшие тестовые данные с чёткими пиками
-data = [0.1, 0.2, 0.5, 1.0, 3.0, 12.0, 8.0, 4.0, 1.5, 0.6, 0.3, 2.5, 9.0, 6.0, 1.0]
+TEST_SIGNAL = [
+    0.1,
+    0.2,
+    0.5,
+    1.0,
+    3.0,
+    12.0,
+    8.0,
+    4.0,
+    1.5,
+    0.6,
+    0.3,
+    2.5,
+    9.0,
+    6.0,
+    1.0,
+]
 
-print("\n=== Полный пайплайн Rust ===")
-result = spectrometer_rust.process_signal(
-    data=data,
-    sample_rate=1000.0,
-    filter_type="median",
-    window_type="hann",
-    threshold=0.01     # ← очень чувствительный
-)
-print(f"Длина спектра: {len(result['spectrum'])}")
-print(f"Найдено пиков: {len(result['peaks'])}")
 
-for p in result['peaks']:
-    print(f"  Пик → pos: {p.position:.2f} | int: {p.intensity:.2f} | SNR: {p.snr:.2f}")
+def run_rust_pipeline():
+    return spectrometer_rust.process_signal(
+        data=TEST_SIGNAL,
+        sample_rate=1000.0,
+        filter_type="median",
+        window_type="hann",
+        threshold=0.01,
+    )
 
-# Графики
-plt.figure(figsize=(12, 8))
-plt.subplot(2, 1, 1)
-plt.plot(data, label="Исходный сигнал", color='gray', alpha=0.7)
-plt.plot(result['spectrum'], label="После FFT", color='blue', linewidth=2)
-plt.title("Спектр после обработки")
-plt.xlabel("Индекс")
-plt.ylabel("Амплитуда")
-plt.grid(True)
-plt.legend()
 
-plt.subplot(2, 1, 2)
-if result['peaks']:
-    pos = [p.position for p in result['peaks']]
-    ints = [p.intensity for p in result['peaks']]
-    plt.stem(pos, ints, linefmt='r-', markerfmt='ro', basefmt=' ')
-    plt.title("Найденные пики")
-else:
-    plt.text(0.5, 0.5, "Пики не найдены", ha='center', va='center', transform=plt.gca().transAxes)
-plt.xlabel("Позиция")
-plt.ylabel("Интенсивность")
-plt.grid(True)
+class RustModuleSmokeTest(unittest.TestCase):
+    def test_rust_pipeline_returns_spectrum_and_peaks(self):
+        result = run_rust_pipeline()
 
-plt.tight_layout()
-plt.show()
+        self.assertIn("spectrum", result)
+        self.assertIn("frequency_axis", result)
+        self.assertIn("peaks", result)
+        self.assertGreater(len(result["spectrum"]), 0)
+        self.assertEqual(len(result["frequency_axis"]), len(result["spectrum"]))
+        self.assertTrue(np.all(np.isfinite(result["spectrum"])))
+        self.assertTrue(np.all(np.isfinite(result["frequency_axis"])))
+
+        for peak in result["peaks"]:
+            self.assertTrue(np.isfinite(peak.position))
+            self.assertTrue(np.isfinite(peak.frequency))
+            self.assertTrue(np.isfinite(peak.intensity))
+
+    def test_frequency_axis_uses_sample_rate(self):
+        result = spectrometer_rust.process_signal(
+            data=[0.0, 1.0, 0.0, -1.0],
+            sample_rate=400.0,
+            filter_type="none",
+            window_type="rectangular",
+            threshold=0.01,
+            baseline=False,
+        )
+
+        self.assertEqual(result["frequency_axis"], [0.0, 100.0])
+
+
+def plot_smoke_result(result):
+    try:
+        import matplotlib.pyplot as plt
+    except ModuleNotFoundError:
+        print("matplotlib is not installed; skipping the optional plot.")
+        return
+
+    plt.figure(figsize=(12, 8))
+    plt.subplot(2, 1, 1)
+    plt.plot(TEST_SIGNAL, label="Input signal", color="gray", alpha=0.7)
+    plt.plot(result["spectrum"], label="After FFT", color="blue", linewidth=2)
+    plt.title("Spectrum after processing")
+    plt.xlabel("Index")
+    plt.ylabel("Amplitude")
+    plt.grid(True)
+    plt.legend()
+
+    plt.subplot(2, 1, 2)
+    if result["peaks"]:
+        positions = [peak.position for peak in result["peaks"]]
+        intensities = [peak.intensity for peak in result["peaks"]]
+        plt.stem(positions, intensities, linefmt="r-", markerfmt="ro", basefmt=" ")
+        plt.title("Detected peaks")
+    else:
+        plt.text(
+            0.5,
+            0.5,
+            "No peaks detected",
+            ha="center",
+            va="center",
+            transform=plt.gca().transAxes,
+        )
+    plt.xlabel("Position")
+    plt.ylabel("Intensity")
+    plt.grid(True)
+
+    plt.tight_layout()
+    plt.show()
+
+
+if __name__ == "__main__":
+    print("Rust module loaded. Version:", spectrometer_rust.get_version())
+    smoke_result = run_rust_pipeline()
+    print("\n=== Rust pipeline smoke test ===")
+    print(f"Spectrum length: {len(smoke_result['spectrum'])}")
+    print(f"Detected peaks: {len(smoke_result['peaks'])}")
+    for peak in smoke_result["peaks"]:
+        print(
+            f"  peak -> pos: {peak.position:.2f} | "
+            f"int: {peak.intensity:.2f} | SNR: {peak.snr:.2f}"
+        )
+    plot_smoke_result(smoke_result)

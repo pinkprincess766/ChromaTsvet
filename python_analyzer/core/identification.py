@@ -1,11 +1,13 @@
-﻿import logging
+﻿from __future__ import annotations
+
+import logging
 import sqlite3
 import json
 import numpy as np
 from typing import List
 from dataclasses import dataclass
 from pathlib import Path
-from paths import get_library_db_path
+from paths import DEFAULT_REFERENCE_DATA, get_library_db_path
 
 
 logger = logging.getLogger("chromatsvet.identification")
@@ -94,15 +96,7 @@ class SpectrumIdentifier:
         if not self.clear_database():
             return False
 
-        default_data = [
-            ("Acetone", "C3H6O", [1,3,10,4,1]),
-            ("Ethanol", "C2H5OH", [2,8,5,1]),
-            ("Isopropanol", "C3H8O", [1,9,3]),
-            ("Methanol", "CH4O", [3,7,2]),
-            ("Benzene", "C6H6", [5,12,8,3]),
-            ("Toluene", "C7H8", [4,11,7,2])
-        ]
-        for name, formula, spectrum in default_data:
+        for name, formula, spectrum in DEFAULT_REFERENCE_DATA:
             if not self.add_reference(name, spectrum, formula):
                 return False
 

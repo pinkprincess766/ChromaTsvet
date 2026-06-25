@@ -1,24 +1,12 @@
-# # Python
+# Python bytecode and caches
 __pycache__/
 *.py[cod]
 *$py.class
-*.so
-.Python
-build/
-develop-eggs/
-dist/
-downloads/
-eggs/
-.eggs/
-lib/
-lib64/
-parts/
-sdist/
-var/
-wheels/
-*.egg-info/
-.installed.cfg
-*.egg
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
 
 # Virtual environments
 .venv/
@@ -26,32 +14,45 @@ venv/
 ENV/
 env/
 
-# Rust
+# Python build artifacts
+build/
+dist/
+downloads/
+eggs/
+.eggs/
+*.egg-info/
+*.egg
+
+# Rust build artifacts
 rust_module/target/
 **/*.rs.bk
-Cargo.lock
 
-# PyO3 / Maturin
+# Native extension artifacts
 *.pyd
 *.so
+*.dylib
 
-# IDE
+# Local application state
+*.db
+*.sqlite
+*.sqlite3
+logs/
+tmp/
+output/
+
+# Test and scratch data
+test_*.csv
+test_*.txt
+*.log
+*.tmp
+
+# IDE and editor files
 .vscode/
 .idea/
 *.swp
 *.swo
 *~
 
-# OS
+# OS metadata
 .DS_Store
 Thumbs.db
-
-# Build artifacts
-*.log
-*.tmp
-
-# Тестовые и временные файлы
-test_*.csv
-test_*.txt
-library.db
-*.db

@@ -1,0 +1,1 @@
+"""ChromaTsvet Python application package."""

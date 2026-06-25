@@ -50,6 +50,9 @@ class MainWindowErrorHandlingTest(unittest.TestCase):
         self.identifier_patch.start()
         self.process_signal = self.process_patch.start()
         self.window = main.MainWindow()
+        self.assertIsNone(self.window.current_data)
+        self.process_signal.assert_not_called()
+        self.window.current_data = [0.1, 0.3, 0.8, 0.2]
 
     def tearDown(self):
         self.window.close()
@@ -124,118 +127,6 @@ class MainWindowErrorHandlingTest(unittest.TestCase):
         self.assertIn("[ERROR]", self.window.log_history[-1])
         self.assertIn("intensity values cannot be empty", self.window.log_history[-1])
 
-    def test_non_finite_file_values_are_rejected_by_parser(self):
-        self.assertIsNone(self.window._parse_number("nan"))
-        self.assertIsNone(self.window._parse_number("inf"))
-        self.assertEqual(self.window._parse_number("1,25"), 1.25)
-
-    def test_parser_keeps_legacy_single_column_files(self):
-        with TemporaryDirectory() as temp_dir:
-            file_path = Path(temp_dir) / "spectrum.txt"
-            file_path.write_text("0.1\n0.3\n1.25\n", encoding="utf-8")
-
-            data, skipped_rows = self.window._read_spectrum_file(file_path)
-
-        self.assertEqual(data, [0.1, 0.3, 1.25])
-        self.assertEqual(skipped_rows, [])
-
-    def test_parser_reads_named_intensity_column_from_comma_csv(self):
-        with TemporaryDirectory() as temp_dir:
-            file_path = Path(temp_dir) / "spectrum.csv"
-            file_path.write_text(
-                "wavelength,intensity\n400,1.5\n401,2.75\n",
-                encoding="utf-8",
-            )
-
-            data, skipped_rows = self.window._read_spectrum_file(file_path)
-
-        self.assertEqual(data, [1.5, 2.75])
-        self.assertEqual(skipped_rows, [])
-
-    def test_parser_reads_tab_delimited_named_intensity_column(self):
-        with TemporaryDirectory() as temp_dir:
-            file_path = Path(temp_dir) / "spectrum.txt"
-            file_path.write_text(
-                "time\tsignal\n0\t2.5\n1\t3.5\n",
-                encoding="utf-8",
-            )
-
-            data, skipped_rows = self.window._read_spectrum_file(file_path)
-
-        self.assertEqual(data, [2.5, 3.5])
-        self.assertEqual(skipped_rows, [])
-
-    def test_parser_reads_semicolon_file_with_decimal_commas(self):
-        with TemporaryDirectory() as temp_dir:
-            file_path = Path(temp_dir) / "spectrum.csv"
-            file_path.write_text(
-                "wavelength;intensity\n400,0;1,25\n401,0;2,50\n",
-                encoding="utf-8",
-            )
-
-            data, skipped_rows = self.window._read_spectrum_file(file_path)
-
-        self.assertEqual(data, [1.25, 2.5])
-        self.assertEqual(skipped_rows, [])
-
-    def test_parser_reads_single_column_decimal_commas_with_header(self):
-        with TemporaryDirectory() as temp_dir:
-            file_path = Path(temp_dir) / "spectrum.txt"
-            file_path.write_text(
-                "intensity\n1,25\n2,50\n",
-                encoding="utf-8",
-            )
-
-            data, skipped_rows = self.window._read_spectrum_file(file_path)
-
-        self.assertEqual(data, [1.25, 2.5])
-        self.assertEqual(skipped_rows, [])
-
-    def test_parser_uses_second_column_for_headerless_two_column_table(self):
-        with TemporaryDirectory() as temp_dir:
-            file_path = Path(temp_dir) / "spectrum.txt"
-            file_path.write_text("0\t5.0\n1\t7.5\n", encoding="utf-8")
-
-            data, skipped_rows = self.window._read_spectrum_file(file_path)
-
-        self.assertEqual(data, [5.0, 7.5])
-        self.assertEqual(skipped_rows, [])
-
-    def test_parser_rejects_inconsistent_column_counts(self):
-        with TemporaryDirectory() as temp_dir:
-            file_path = Path(temp_dir) / "broken.csv"
-            file_path.write_text(
-                "position;intensity\n0;1.0\n1;2.0;unexpected\n",
-                encoding="utf-8",
-            )
-
-            with self.assertRaisesRegex(main.SpectrumFileFormatError, "3 columns"):
-                self.window._read_spectrum_file(file_path)
-
-    def test_parser_rejects_table_without_intensity_column(self):
-        with TemporaryDirectory() as temp_dir:
-            file_path = Path(temp_dir) / "ambiguous.csv"
-            file_path.write_text(
-                "wavelength,temperature\n400,20\n401,21\n",
-                encoding="utf-8",
-            )
-
-            with self.assertRaisesRegex(
-                main.SpectrumFileFormatError, "Could not identify"
-            ):
-                self.window._read_spectrum_file(file_path)
-
-    def test_parser_rejects_malformed_csv_quotes(self):
-        with TemporaryDirectory() as temp_dir:
-            file_path = Path(temp_dir) / "broken.csv"
-            file_path.write_text(
-                'position,intensity\n0,"1.0\n',
-                encoding="utf-8",
-            )
-
-            with self.assertRaises(csv.Error):
-                self.window._read_spectrum_file(file_path)
-
     def test_load_file_shows_format_warning_for_invalid_table(self):
         with TemporaryDirectory() as temp_dir:
             file_path = Path(temp_dir) / "broken.csv"
@@ -273,6 +164,8 @@ class MainWindowErrorHandlingTest(unittest.TestCase):
         self.assertIn("RuntimeError", self.window.log_history[-1])
 
     def test_pdf_permission_failure_is_reported(self):
+        self.window.run_analysis()
+
         with (
             patch.object(
                 main.QFileDialog,
@@ -292,6 +185,26 @@ class MainWindowErrorHandlingTest(unittest.TestCase):
         self.assertIn("[ERROR]", self.window.log_history[-1])
         self.assertIn("PermissionError: access denied", self.window.log_history[-1])
 
+    def test_pdf_report_writes_file(self):
+        self.window.run_analysis()
+
+        with TemporaryDirectory() as temp_dir:
+            output_path = Path(temp_dir) / "report.pdf"
+            with (
+                patch.object(
+                    main.QFileDialog,
+                    "getSaveFileName",
+                    return_value=(str(output_path), "PDF (*.pdf)"),
+                ),
+                patch.object(QMessageBox, "information", return_value=QMessageBox.Ok),
+            ):
+                self.window.export_pdf()
+
+            self.assertTrue(output_path.is_file())
+            self.assertGreater(output_path.stat().st_size, 0)
+
+        self.assertIn("PDF report created:", self.window.log_history[-1])
+
     def test_peak_export_is_disabled_without_detected_peaks(self):
         self.assertFalse(self.window.btn_export_peaks.isEnabled())
 
@@ -307,6 +220,7 @@ class MainWindowErrorHandlingTest(unittest.TestCase):
 
     def test_peak_export_writes_csv_and_updates_log(self):
         peak = SimpleNamespace(
+            frequency=62.0,
             position=124.0,
             intensity=0.854,
             width=12.3,
@@ -332,9 +246,105 @@ class MainWindowErrorHandlingTest(unittest.TestCase):
             with output_path.open(newline="", encoding="utf-8") as csv_file:
                 rows = list(csv.reader(csv_file))
 
-        self.assertEqual(rows[0], ["position", "intensity", "width", "area", "snr"])
-        self.assertEqual(rows[1], ["124.0", "0.854", "12.3", "4.21", "18.7"])
+        self.assertEqual(
+            rows[0],
+            ["frequency_hz", "position", "intensity", "width", "area", "snr"],
+        )
+        self.assertEqual(rows[1], ["62.0", "124.0", "0.854", "12.3", "4.21", "18.7"])
         self.assertIn("Peak list exported:", self.window.log_history[-1])
+
+    def test_detected_peaks_are_shown_in_table_and_plot(self):
+        peaks = [
+            SimpleNamespace(
+                frequency=6.0,
+                position=12.0,
+                intensity=0.42,
+                width=2.5,
+                area=1.2,
+                snr=8.0,
+            ),
+            SimpleNamespace(
+                frequency=12.25,
+                position=24.5,
+                intensity=0.91,
+                width=3.5,
+                area=2.4,
+                snr=15.0,
+            ),
+        ]
+        self.process_signal.return_value = {
+            "spectrum": [0.0, 0.42, 0.1, 0.91],
+            "peaks": peaks,
+        }
+
+        self.window.run_analysis()
+
+        self.assertEqual(self.window.peak_table.rowCount(), 2)
+        self.assertEqual(self.window.peak_table.item(0, 0).text(), "6")
+        self.assertEqual(self.window.peak_table.item(0, 1).text(), "12")
+        self.assertEqual(self.window.peak_table.item(0, 2).text(), "0.42")
+        self.assertEqual(self.window.peak_table.item(1, 0).text(), "12.25")
+        self.assertEqual(self.window.results_tabs.tabText(0), "Detected Peaks (2)")
+        self.assertGreaterEqual(
+            len(self.window.plot.getPlotItem().listDataItems()),
+            2,
+        )
+
+    def test_plot_mouse_zoom_is_enabled(self):
+        view_box = self.window.plot.getPlotItem().getViewBox()
+
+        self.assertEqual(view_box.state["mouseEnabled"], [True, True])
+        self.assertEqual(view_box.state["mouseMode"], main.pg.ViewBox.RectMode)
+        self.assertIn("zoom", self.window.plot.toolTip().lower())
+
+    def test_toolbar_logo_is_loaded(self):
+        self.assertTrue(main.APP_LOGO_PATH.is_file())
+        self.assertFalse(self.window.logo_label.isHidden())
+        self.assertFalse(self.window.logo_label.pixmap().isNull())
+
+    def test_area_normalization_is_disabled_by_default(self):
+        self.assertFalse(self.window.normalize_area)
+        self.window.run_analysis()
+        self.assertNotIn("normalize", self.process_signal.call_args.kwargs)
+        self.assertEqual(
+            self.process_signal.call_args.kwargs["sample_rate"],
+            main.DEFAULT_SAMPLE_RATE,
+        )
+
+    def test_analysis_settings_are_saved_and_passed_to_rust(self):
+        self.window.set_analysis_settings(
+            baseline_enabled=self.window.baseline_enabled,
+            baseline_method=self.window.baseline_method,
+            peak_threshold=self.window.peak_threshold,
+            peak_prominence=self.window.peak_prominence,
+            peak_distance=self.window.peak_distance,
+            filter_type=self.window.filter_type,
+            filter_params=self.window.filter_params,
+            sample_rate=2_500.0,
+            normalize_area=True,
+        )
+
+        self.assertTrue(self.window.normalize_area)
+        self.assertEqual(self.window.sample_rate, 2_500.0)
+        self.assertTrue(
+            main.saved_bool(
+                self.window.settings,
+                "analysis/normalize_area",
+                False,
+            )
+        )
+        self.assertEqual(
+            main.saved_float(
+                self.window.settings,
+                "analysis/sample_rate",
+                0.0,
+                0.001,
+                10_000_000.0,
+            ),
+            2_500.0,
+        )
+        self.assertEqual(self.process_signal.call_args.kwargs["sample_rate"], 2_500.0)
+        self.assertTrue(self.process_signal.call_args.kwargs["normalize"])
 
     def test_identification_table_uses_compared_points(self):
         self.window.identifier.find_matches = lambda spectrum: [

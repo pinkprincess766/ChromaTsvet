@@ -1,140 +1,199 @@
-[日本語版はこちら](README.ja.md)
+<p align="right"><a href="README.ja.md">日本語</a></p>
 
-# ChromaTsvet
+<p align="center">
+  <img src="assets/chromatsvet_readme_logo.png" alt="ChromaTsvet logo" width="430">
+</p>
 
-**ChromaTsvet** is a desktop application for loading, processing, visualizing, and identifying spectral data and chromatograms.
+<h1 align="center">ChromaTsvet</h1>
 
-The project combines a Python desktop interface with a Rust/PyO3 signal-processing core, making it a practical foundation for a fast and reliable scientific analysis tool.
+<p align="center">
+  A desktop application for loading, processing, visualizing, and identifying
+  spectral data and chromatograms.
+</p>
 
-The name **ChromaTsvet** honors **Mikhail Semyonovich Tsvet**, the botanist who invented chromatography.
+<p align="center">
+  <a href="https://github.com/pinkprincess766/ChromaTsvet/actions/workflows/ci.yml"><img src="https://github.com/pinkprincess766/ChromaTsvet/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+  <img src="https://img.shields.io/badge/release-v0.1.0-2f855a" alt="Release v0.1.0">
+  <img src="https://img.shields.io/badge/Python-3.9%2B-3776ab" alt="Python 3.9+">
+  <img src="https://img.shields.io/badge/Rust-PyO3-b7410e" alt="Rust and PyO3">
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-4c566a" alt="MIT license"></a>
+</p>
 
-## Features
+![ChromaTsvet spectrum analysis](docs/screenshots/01-main-spectrum.png)
 
-- Load spectral data and chromatograms from CSV/TXT files
-- Process numeric signals with the Rust backend
-- Apply windowing and FFT-based spectrum calculation
-- Detect peaks in processed spectra
-- Compare spectra against a local SQLite reference library
-- Add and restore reference substances
-- Visualize spectra and detected peaks in a PyQt desktop UI
-- Export analysis results to PDF reports
+ChromaTsvet combines a PyQt desktop interface with a Rust/PyO3 signal-processing
+core. It is designed as a practical, inspectable foundation for scientific
+signal analysis rather than a black-box workflow. The name honors Mikhail
+Semyonovich Tsvet, the botanist who invented chromatography.
 
-## Installation
+## Project Status
 
-### Windows
+ChromaTsvet v0.1.0 is a first public, source-based release. It is ready for
+local experiments, demonstrations, and iterative scientific tooling work, but it
+is not yet a validated laboratory instrument. Continuous integration runs the
+Python and Rust test suites; packaged installers and stronger peak-based
+identification are planned after v0.1.
 
-1. Install Python 3.9 or newer.
-2. Install the Python dependencies:
+## Highlights
 
-   ```bat
-   py -m pip install numpy scipy PyQt5 pyqtgraph reportlab Pillow
-   ```
+- Load numeric spectral or chromatographic data from CSV and TXT files.
+- Apply median or Savitzky-Golay filtering and baseline correction.
+- Calculate an FFT spectrum using a configurable sample rate and frequency axis.
+- Normalize a spectrum by integral area when comparable intensity scaling is needed.
+- Detect peaks and calculate frequency, intensity, FWHM width, Gaussian area, and SNR.
+- Inspect detected peaks in the plot and in a detailed analysis table.
+- Zoom into the spectrum with the mouse.
+- Compare spectra against a local SQLite reference library.
+- Export detected peaks to CSV and complete analysis results to PDF.
+- Use light and dark application themes.
 
-3. Make sure the compiled Rust extension module is available in the project root:
+## Screenshots
 
-   ```text
-   spectrometer_rust.pyd
-   ```
+<table>
+  <tr>
+    <td width="50%"><strong>Analysis settings</strong></td>
+    <td width="50%"><strong>Detected peaks</strong></td>
+  </tr>
+  <tr>
+    <td><img src="docs/screenshots/02-analysis-settings.png" alt="Analysis settings dialog"></td>
+    <td><img src="docs/screenshots/03-peaks-table.png" alt="Detected peaks table"></td>
+  </tr>
+  <tr>
+    <td colspan="2"><strong>PDF analysis report</strong></td>
+  </tr>
+  <tr>
+    <td colspan="2" align="center"><img src="docs/screenshots/04-pdf-report.png" alt="Generated PDF analysis report" width="620"></td>
+  </tr>
+</table>
 
-4. Run the application:
+The release screenshots use a deterministic demonstration signal containing
+components at 95 Hz, 240 Hz, and 410 Hz. They can be regenerated with
+`tools/capture_release_screenshots.py`; the PNG files are intended for the
+README and GitHub release notes. Regenerating the PDF preview requires either
+`pypdfium2` or Poppler's `pdftoppm`.
 
-   ```bat
-   py python_analyzer\main.py
-   ```
+## Getting Started
 
-### macOS / Linux
+### Prerequisites
 
-1. Install Python 3.9 or newer.
-2. Install the Python dependencies:
+- Python 3.9 or newer
+- A current Rust toolchain with Cargo
+- Platform build tools required by PyO3
 
-   ```bash
-   python3 -m pip install numpy scipy PyQt5 pyqtgraph reportlab Pillow
-   ```
+### Build and run from source
 
-3. Build or place the platform-specific Rust/PyO3 extension module in the project root.
-4. Run the application:
+```bash
+git clone https://github.com/pinkprincess766/ChromaTsvet.git
+cd ChromaTsvet
 
-   ```bash
-   python3 python_analyzer/main.py
-   ```
+python3 -m venv .venv
+source .venv/bin/activate
+python -m pip install --upgrade pip
+python -m pip install maturin
+python -m pip install -e .
 
-## Building from Source
+cd rust_module
+maturin develop
+cd ..
 
-The Rust signal-processing module lives in `rust_module/` and is exposed to Python through PyO3.
+python python_analyzer/main.py
+```
 
-To check and test the Rust module:
+On Windows, activate the environment with:
+
+```bat
+.venv\Scripts\activate
+```
+
+Then run the same `pip`, `maturin develop`, and application commands from the
+activated environment. The application starts without demo data; use **Open
+file** to load a CSV or TXT spectrum.
+
+## Input Data
+
+The simplest supported file contains one intensity value per line:
+
+```text
+intensity
+0.12
+0.35
+1.42
+0.48
+```
+
+Headerless two-column files are also supported; the second column is interpreted
+as intensity. Named table columns such as `intensity`, `amplitude`, `signal`,
+`value`, or `absorbance` are detected automatically. CSV files may use comma,
+semicolon, or tab delimiters.
+
+After loading a file, set the correct sample rate in **Analysis Settings**. The
+sample rate is required to convert FFT bins into physical frequency values.
+
+## Typical Workflow
+
+1. Open a CSV or TXT signal file.
+2. Configure sample rate, filtering, baseline correction, and peak-detection parameters.
+3. Run the analysis and inspect marked peaks on the frequency plot.
+4. Review peak frequency, intensity, width, area, and SNR in the results table.
+5. Export the peak list as CSV or generate a PDF analysis report.
+
+## Development
+
+Run the Python test suite from the project root:
+
+```bash
+QT_QPA_PLATFORM=offscreen python -m unittest discover -v
+```
+
+Run the Rust unit tests:
 
 ```bash
 cd rust_module
 cargo test
 ```
 
-To build the extension module manually, build the Rust crate as a `cdylib` and place the resulting platform-specific Python extension in the project root:
+Regenerate the v0.1 PNG screenshot set:
 
-- Windows: `spectrometer_rust.pyd`
-- macOS / Linux: platform-specific shared extension module
-
-Packaging with tools such as `maturin` is a planned improvement, but the current project keeps the build flow intentionally simple.
-
-## Usage
-
-1. Start ChromaTsvet.
-2. Click **Open file** and select a CSV or TXT file with numeric signal values.
-3. The application loads the data, processes the signal, and displays the resulting spectrum.
-4. Detected peaks are marked on the plot.
-5. Candidate substance matches are shown in the results table.
-6. Use **Add** to add a reference substance to the local library.
-7. Use **PDF Report** to export the current analysis results.
-
-For best results, use clean numeric input files with one signal value per row.
-
-## Project Structure
-
-```text
-.
-├── python_analyzer/
-│   ├── main.py                  # PyQt GUI, file loading, plotting, PDF export
-│   └── core/
-│       └── identification.py    # SQLite-backed spectrum identification
-├── rust_module/
-│   ├── Cargo.toml
-│   └── src/
-│       ├── lib.rs               # PyO3 module exports
-│       ├── types.rs             # Python-visible Rust data types
-│       └── signal/
-│           ├── filters.rs       # Signal filters
-│           ├── fft.rs           # FFT magnitude spectrum
-│           ├── peak_detection.rs
-│           └── window.rs        # Window functions
-├── library.db                   # Reference substance database
-├── spectrometer_rust.pyd        # Compiled Windows extension module
-├── test_rust.py                 # Manual Rust module smoke test
-└── README.md
+```bash
+QT_QPA_PLATFORM=offscreen python tools/capture_release_screenshots.py
 ```
 
-## Technologies Used
+## Architecture
 
-- **Python** — application orchestration and desktop UI
-- **PyQt5** — native desktop interface
-- **pyqtgraph** — interactive plotting
-- **NumPy** — numeric array handling
-- **SQLite** — local reference library
-- **reportlab** — PDF report generation
-- **Rust** — performance-sensitive signal processing
-- **PyO3** — Python bindings for the Rust module
-- **rustfft / ndarray** — FFT and array operations in Rust
+```text
+python_analyzer/
+  main.py                    Thin bootstrap and compatibility facade
+  gui/main_window.py         MainWindow orchestration, state, exports
+  gui/dialogs.py             Settings, analysis settings, and log dialogs
+  gui/theme.py               Qt palette and stylesheet helpers
+  gui/log_view.py            Shared log-view formatting
+  analysis/models.py         AnalysisSettings and LoadedSpectrum dataclasses
+  analysis/runner.py         Filter -> Rust pipeline wrapper
+  readers/spectrum_reader.py CSV/TXT spectrum parsing
+  viz/spectrum_plot.py       Spectrum plotting, frequency axis, peak markers
+  core/identification.py     SQLite-backed reference matching
 
-## Roadmap
+rust_module/src/
+  lib.rs                     PyO3 analysis pipeline
+  types.rs                   Python-visible result types
+  signal/filters.rs          Filters and baseline correction
+  signal/fft.rs              FFT and frequency-axis calculation
+  signal/normalization.rs    Integral-area normalization
+  signal/peak_detection.rs   Peak metrics and detection
+  signal/window.rs           FFT window functions
+```
 
-- Improve scientific peak matching and scoring
-- Add clearer analysis parameters in the UI
-- Include plots and processing metadata in PDF reports
-- Add a reproducible cross-platform build flow
-- Expand automated tests for file loading, identification, and Rust DSP edge cases
-- Improve reference-library management and validation
+Python owns file handling, the desktop UI, and reporting. Rust owns the numerical
+pipeline and returns the processed spectrum, frequency axis, and peak structures
+through PyO3.
+
+## v0.1 Scope
+
+Version 0.1 is the first public release: the application can load data, perform
+an analysis, visualize and export its results, and preserve user settings. The
+next development priorities are stronger peak-based substance matching,
+cross-platform packaged builds, and a richer reference-library workflow.
 
 ## License
 
-This project is licensed under the **MIT License**.
-
-See the [LICENSE](LICENSE) file for the full text.
+ChromaTsvet is released under the [MIT License](LICENSE).

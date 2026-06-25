@@ -4,6 +4,7 @@ use pyo3::prelude::*;
 #[pyclass(get_all, set_all)]
 pub struct Peak {
     pub position: f64,
+    pub frequency: f64,
     pub intensity: f64,
     pub width: f64,
     pub area: f64,
@@ -16,6 +17,7 @@ impl Peak {
     pub fn new(position: f64, intensity: f64) -> Self {
         Self {
             position,
+            frequency: 0.0,
             intensity,
             width: 0.0,
             area: 0.0,

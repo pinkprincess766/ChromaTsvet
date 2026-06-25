@@ -1,0 +1,327 @@
+"""Dialogs for the application."""
+
+from __future__ import annotations
+
+import json
+
+from PyQt5.QtWidgets import (
+    QDialog, QVBoxLayout, QFormLayout, QComboBox, QSpinBox, QHBoxLayout,
+    QPushButton, QLabel, QDialogButtonBox, QTextEdit, QGroupBox, QCheckBox,
+    QDoubleSpinBox, QTabWidget, QApplication, QTableWidget, QTableWidgetItem
+)
+from PyQt5.QtCore import Qt
+from PyQt5.QtGui import QFont, QFontDatabase, QTextCursor
+
+from python_analyzer.gui.log_view import append_log_entry, log_level_from_entry
+from python_analyzer.gui.theme import FONT_CANDIDATES
+
+# These will be provided by the parent or imported
+# We use parent to access state
+
+# Import constants and helpers from main for compatibility
+# (in full refactor some would be moved to shared)
+
+try:
+    import filters
+except Exception:
+    filters = None
+
+# Constants copied for dialogs (to avoid circular)
+DEFAULT_BASELINE_ENABLED = True
+DEFAULT_BASELINE_METHOD = "improved"
+DEFAULT_SAMPLE_RATE = 1000.0
+DEFAULT_PEAK_THRESHOLD = 0.05
+DEFAULT_PEAK_PROMINENCE = 0.0
+DEFAULT_PEAK_DISTANCE = 1
+DEFAULT_FILTER_TYPE = "median"
+DEFAULT_NORMALIZE_AREA = False
+DEFAULT_WINDOW_TYPE = "hann"
+
+
+class SettingsDialog(QDialog):
+    def __init__(self, parent):
+        super().__init__(parent)
+        self.main_window = parent
+        self.setWindowTitle("Settings")
+        self.setMinimumWidth(360)
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(16, 16, 16, 12)
+        layout.setSpacing(12)
+
+        form = QFormLayout()
+        form.setLabelAlignment(Qt.AlignLeft)
+        form.setFormAlignment(Qt.AlignTop)
+        form.setHorizontalSpacing(14)
+        form.setVerticalSpacing(10)
+
+        self.theme_combo = QComboBox()
+        self.theme_combo.addItem("Dark", "dark")
+        self.theme_combo.addItem("Light", "light")
+        self.theme_combo.setCurrentIndex(self.theme_combo.findData(parent.theme))
+        self.theme_combo.currentIndexChanged.connect(self._theme_changed)
+        form.addRow("Theme", self.theme_combo)
+
+        self.font_combo = QComboBox()
+        for family in self._font_choices():
+            self.font_combo.addItem(family)
+        self.font_combo.setCurrentText(parent.font_family)
+        self.font_combo.currentTextChanged.connect(self._font_changed)
+        form.addRow("Font", self.font_combo)
+
+        self.font_size_spin = QSpinBox()
+        self.font_size_spin.setRange(9, 16)
+        self.font_size_spin.setValue(parent.font_size)
+        self.font_size_spin.setSuffix(" pt")
+        self.font_size_spin.valueChanged.connect(self._font_size_changed)
+        form.addRow("Font size", self.font_size_spin)
+
+        layout.addLayout(form)
+
+        hint = QLabel("Font changes are applied immediately. Restart the app if some system controls do not refresh.")
+        hint.setWordWrap(True)
+        layout.addWidget(hint)
+
+        buttons = QHBoxLayout()
+        self.reset_button = QPushButton("Reset settings")
+        self.reset_button.clicked.connect(self._reset_settings)
+        buttons.addWidget(self.reset_button)
+        buttons.addStretch()
+
+        close_buttons = QDialogButtonBox(QDialogButtonBox.Close)
+        close_buttons.rejected.connect(self.reject)
+        buttons.addWidget(close_buttons)
+        layout.addLayout(buttons)
+
+    def _font_choices(self):
+        current = QApplication.font().family()
+        families = set(QFontDatabase().families())
+        choices = []
+        for family in FONT_CANDIDATES + [current]:
+            if family and family in families and family not in choices:
+                choices.append(family)
+        if current not in choices:
+            choices.append(current)
+        return choices
+
+    def _theme_changed(self):
+        self.main_window.set_theme(self.theme_combo.currentData())
+
+    def _font_changed(self, family):
+        self.main_window.set_font_family(family)
+
+    def _font_size_changed(self, size):
+        self.main_window.set_font_size(size)
+
+    def _reset_settings(self):
+        self.main_window.reset_ui_settings()
+        self.theme_combo.blockSignals(True)
+        self.font_combo.blockSignals(True)
+        self.font_size_spin.blockSignals(True)
+        self.theme_combo.setCurrentIndex(self.theme_combo.findData(self.main_window.theme))
+        self.font_combo.setCurrentText(self.main_window.font_family)
+        self.font_size_spin.setValue(self.main_window.font_size)
+        self.theme_combo.blockSignals(False)
+        self.font_combo.blockSignals(False)
+        self.font_size_spin.blockSignals(False)
+
+class LogWindow(QDialog):
+    def __init__(self, parent):
+        super().__init__(parent)
+        self.main_window = parent
+        self.setWindowTitle("ChromaTsvet Log")
+        self.resize(760, 460)
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(12, 12, 12, 10)
+        layout.setSpacing(10)
+
+        self.log_view = QTextEdit()
+        self.log_view.setReadOnly(True)
+        self.log_view.setFont(QFont("Consolas", 9))
+        layout.addWidget(self.log_view)
+
+        for entry in parent.log_history:
+            self.append_entry(entry, log_level_from_entry(entry))
+
+        buttons = QHBoxLayout()
+        clear_button = QPushButton("Clear log")
+        copy_button = QPushButton("Copy all")
+        close_button = QPushButton("Close")
+        clear_button.clicked.connect(parent.clear_log)
+        copy_button.clicked.connect(self.copy_all)
+        close_button.clicked.connect(self.close)
+        buttons.addWidget(clear_button)
+        buttons.addWidget(copy_button)
+        buttons.addStretch()
+        buttons.addWidget(close_button)
+        layout.addLayout(buttons)
+
+        self.log_view.moveCursor(QTextCursor.End)
+
+    def append_entry(self, entry: str, level: str = "info") -> None:
+        append_log_entry(self.log_view, entry, level)
+
+    def clear(self):
+        self.log_view.clear()
+
+    def copy_all(self):
+        QApplication.clipboard().setText(self.log_view.toPlainText())
+
+
+class AnalysisSettingsDialog(QDialog):
+    def __init__(self, parent):
+        super().__init__(parent)
+        self.main_window = parent
+        self.setWindowTitle("Analysis Settings")
+        self.setMinimumWidth(440)
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(16, 16, 16, 12)
+        layout.setSpacing(12)
+
+        baseline_group = QGroupBox("Baseline correction")
+        baseline_layout = QVBoxLayout(baseline_group)
+        baseline_layout.setSpacing(10)
+
+        self.baseline_checkbox = QCheckBox("Enable baseline correction")
+        self.baseline_checkbox.setChecked(parent.baseline_enabled)
+        baseline_layout.addWidget(self.baseline_checkbox)
+
+        baseline_form = QFormLayout()
+        baseline_form.setHorizontalSpacing(14)
+        self.baseline_method_combo = QComboBox()
+        self.baseline_method_combo.addItem("Improved", "improved")
+        self.baseline_method_combo.addItem("Simple", "simple")
+        method_index = self.baseline_method_combo.findData(parent.baseline_method)
+        self.baseline_method_combo.setCurrentIndex(max(0, method_index))
+        baseline_form.addRow("Method", self.baseline_method_combo)
+        baseline_layout.addLayout(baseline_form)
+        layout.addWidget(baseline_group)
+
+        acquisition_group = QGroupBox("Acquisition")
+        acquisition_form = QFormLayout(acquisition_group)
+        acquisition_form.setHorizontalSpacing(14)
+        acquisition_form.setVerticalSpacing(10)
+
+        self.sample_rate_spin = QDoubleSpinBox()
+        self.sample_rate_spin.setRange(0.001, 10_000_000.0)
+        self.sample_rate_spin.setDecimals(3)
+        self.sample_rate_spin.setSingleStep(100.0)
+        self.sample_rate_spin.setSuffix(" Hz")
+        self.sample_rate_spin.setValue(parent.sample_rate)
+        self.sample_rate_spin.setToolTip("Sampling rate used to convert FFT bins to frequency")
+        acquisition_form.addRow("Sample rate", self.sample_rate_spin)
+        layout.addWidget(acquisition_group)
+
+        normalization_group = QGroupBox("Spectrum normalization")
+        normalization_layout = QVBoxLayout(normalization_group)
+        normalization_layout.setSpacing(8)
+
+        self.normalize_area_checkbox = QCheckBox("Normalize spectrum area to 1")
+        self.normalize_area_checkbox.setChecked(parent.normalize_area)
+        self.normalize_area_checkbox.setToolTip(
+            "Scale the baseline-corrected spectrum by its positive trapezoidal area before peak detection"
+        )
+        normalization_layout.addWidget(self.normalize_area_checkbox)
+        layout.addWidget(normalization_group)
+
+        filter_group = QGroupBox("Signal filtering")
+        filter_form = QFormLayout(filter_group)
+        filter_form.setHorizontalSpacing(14)
+        filter_form.setVerticalSpacing(10)
+
+        self.filter_type_combo = QComboBox()
+        if filters:
+            for filter_type, display_name in filters.get_available_filters().items():
+                self.filter_type_combo.addItem(display_name, filter_type)
+        filter_index = self.filter_type_combo.findData(parent.filter_type)
+        self.filter_type_combo.setCurrentIndex(max(0, filter_index))
+        filter_form.addRow("Filter", self.filter_type_combo)
+
+        self.filter_window_label = QLabel("Window size")
+        self.filter_window_spin = QSpinBox()
+        self.filter_window_spin.setRange(3, 51)
+        self.filter_window_spin.setSingleStep(2)
+        self.filter_window_spin.setValue(
+            parent.filter_params.get(
+                "window_size", 5 if not filters else filters.get_default_params("median")["window_size"]
+            )
+        )
+        self.filter_window_spin.valueChanged.connect(self._ensure_odd_window_size)
+        self.filter_window_spin.setToolTip("Median filter window size")
+        filter_form.addRow(self.filter_window_label, self.filter_window_spin)
+        layout.addWidget(filter_group)
+
+        peak_group = QGroupBox("Peak detection")
+        peak_form = QFormLayout(peak_group)
+        peak_form.setHorizontalSpacing(14)
+        peak_form.setVerticalSpacing(10)
+
+        self.threshold_spin = QDoubleSpinBox()
+        self.threshold_spin.setRange(0.001, 1.0)
+        self.threshold_spin.setDecimals(3)
+        self.threshold_spin.setSingleStep(0.001)
+        self.threshold_spin.setValue(parent.peak_threshold)
+        self.threshold_spin.setToolTip("Sensitivity factor relative to the spectrum dynamic range")
+        peak_form.addRow("Threshold", self.threshold_spin)
+
+        self.prominence_spin = QDoubleSpinBox()
+        self.prominence_spin.setRange(0.0, 1_000_000.0)
+        self.prominence_spin.setDecimals(4)
+        self.prominence_spin.setSingleStep(0.001)
+        self.prominence_spin.setSpecialValueText("Automatic")
+        self.prominence_spin.setValue(parent.peak_prominence)
+        self.prominence_spin.setToolTip("Minimum peak prominence in spectrum intensity units; 0 uses automatic detection")
+        peak_form.addRow("Prominence", self.prominence_spin)
+
+        self.distance_spin = QSpinBox()
+        self.distance_spin.setRange(1, 10_000)
+        self.distance_spin.setSuffix(" points")
+        self.distance_spin.setValue(parent.peak_distance)
+        self.distance_spin.setToolTip("Minimum distance between detected peaks")
+        peak_form.addRow("Distance", self.distance_spin)
+        layout.addWidget(peak_group)
+
+        hint = QLabel("Apply saves the settings and reruns the current analysis.")
+        hint.setWordWrap(True)
+        layout.addWidget(hint)
+
+        buttons = QDialogButtonBox(QDialogButtonBox.Apply | QDialogButtonBox.Close)
+        buttons.button(QDialogButtonBox.Apply).clicked.connect(self.apply_settings)
+        buttons.rejected.connect(self.reject)
+        layout.addWidget(buttons)
+
+        self.baseline_checkbox.toggled.connect(self.baseline_method_combo.setEnabled)
+        self.baseline_method_combo.setEnabled(self.baseline_checkbox.isChecked())
+        self.filter_type_combo.currentIndexChanged.connect(
+            self._update_filter_params_visibility
+        )
+        self._update_filter_params_visibility()
+
+    def _update_filter_params_visibility(self):
+        median_selected = self.filter_type_combo.currentData() == "median"
+        self.filter_window_label.setVisible(median_selected)
+        self.filter_window_spin.setVisible(median_selected)
+
+    def _ensure_odd_window_size(self, window_size):
+        if window_size % 2 == 0:
+            self.filter_window_spin.setValue(min(51, window_size + 1))
+
+    def apply_settings(self):
+        filter_type = self.filter_type_combo.currentData()
+        filter_params = {}
+        if filter_type == "median":
+            filter_params["window_size"] = self.filter_window_spin.value()
+
+        self.main_window.set_analysis_settings(
+            baseline_enabled=self.baseline_checkbox.isChecked(),
+            baseline_method=self.baseline_method_combo.currentData(),
+            peak_threshold=self.threshold_spin.value(),
+            peak_prominence=self.prominence_spin.value(),
+            peak_distance=self.distance_spin.value(),
+            filter_type=filter_type,
+            filter_params=filter_params,
+            sample_rate=self.sample_rate_spin.value(),
+            normalize_area=self.normalize_area_checkbox.isChecked(),
+        )
