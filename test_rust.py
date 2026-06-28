@@ -57,6 +57,7 @@ class RustModuleSmokeTest(unittest.TestCase):
             self.assertTrue(np.isfinite(peak.position))
             self.assertTrue(np.isfinite(peak.frequency))
             self.assertTrue(np.isfinite(peak.intensity))
+            self.assertTrue(np.isfinite(peak.width_hz))
 
     def test_frequency_axis_uses_sample_rate(self):
         result = spectrometer_rust.process_signal(
@@ -68,7 +69,15 @@ class RustModuleSmokeTest(unittest.TestCase):
             baseline=False,
         )
 
-        self.assertEqual(result["frequency_axis"], [0.0, 100.0])
+        self.assertEqual(result["frequency_axis"], [0.0, 100.0, 200.0])
+
+    def test_peak_width_hz_uses_frequency_bin_width(self):
+        result = run_rust_pipeline()
+        self.assertGreater(len(result["peaks"]), 0)
+
+        bin_width = result["sample_rate"] / len(TEST_SIGNAL)
+        for peak in result["peaks"]:
+            self.assertAlmostEqual(peak.width_hz, peak.width * bin_width)
 
 
 def plot_smoke_result(result):

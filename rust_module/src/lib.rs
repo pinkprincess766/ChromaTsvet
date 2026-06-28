@@ -65,7 +65,7 @@ fn process_signal<'py>(
     };
 
     // 2. FFT + оконная функция
-    let spectrum = signal::fft::compute_magnitude_spectrum(&signal, window_type, sample_rate);
+    let spectrum = signal::fft::compute_magnitude_spectrum(&signal, window_type);
 
     // 3. Baseline correction before peak detection
     let baseline_method = baseline_method.to_lowercase();
@@ -108,6 +108,7 @@ fn process_signal<'py>(
     };
     for peak in peaks.iter_mut() {
         peak.frequency = peak.position * bin_width;
+        peak.width_hz = peak.width * bin_width;
     }
 
     let dict = PyDict::new(py);

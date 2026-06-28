@@ -230,6 +230,7 @@ fn build_peak(signal: &Array1<f64>, candidate: PeakCandidate, noise: f64) -> Pea
         frequency: 0.0,
         intensity: candidate.intensity,
         width,
+        width_hz: 0.0,
         area,
         snr: candidate.prominence / noise,
     }
