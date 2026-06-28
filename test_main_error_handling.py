@@ -224,6 +224,7 @@ class MainWindowErrorHandlingTest(unittest.TestCase):
             position=124.0,
             intensity=0.854,
             width=12.3,
+            width_hz=6.15,
             area=4.21,
             snr=18.7,
         )
@@ -248,9 +249,38 @@ class MainWindowErrorHandlingTest(unittest.TestCase):
 
         self.assertEqual(
             rows[0],
-            ["frequency_hz", "position", "intensity", "width", "area", "snr"],
+            [
+                "source_file",
+                "sample_rate_hz",
+                "filter_type",
+                "baseline",
+                "normalization",
+                "frequency_hz",
+                "position_bin",
+                "intensity",
+                "width_bins",
+                "width_hz",
+                "area",
+                "snr",
+            ],
         )
-        self.assertEqual(rows[1], ["62.0", "124.0", "0.854", "12.3", "4.21", "18.7"])
+        self.assertEqual(
+            rows[1],
+            [
+                "In-memory data",
+                "1000.0",
+                "median",
+                "improved",
+                "none",
+                "62.0",
+                "124.0",
+                "0.854",
+                "12.3",
+                "6.15",
+                "4.21",
+                "18.7",
+            ],
+        )
         self.assertIn("Peak list exported:", self.window.log_history[-1])
 
     def test_detected_peaks_are_shown_in_table_and_plot(self):
@@ -260,6 +290,7 @@ class MainWindowErrorHandlingTest(unittest.TestCase):
                 position=12.0,
                 intensity=0.42,
                 width=2.5,
+                width_hz=1.25,
                 area=1.2,
                 snr=8.0,
             ),
@@ -268,6 +299,7 @@ class MainWindowErrorHandlingTest(unittest.TestCase):
                 position=24.5,
                 intensity=0.91,
                 width=3.5,
+                width_hz=1.75,
                 area=2.4,
                 snr=15.0,
             ),
@@ -283,6 +315,7 @@ class MainWindowErrorHandlingTest(unittest.TestCase):
         self.assertEqual(self.window.peak_table.item(0, 0).text(), "6")
         self.assertEqual(self.window.peak_table.item(0, 1).text(), "12")
         self.assertEqual(self.window.peak_table.item(0, 2).text(), "0.42")
+        self.assertEqual(self.window.peak_table.item(0, 4).text(), "1.25")
         self.assertEqual(self.window.peak_table.item(1, 0).text(), "12.25")
         self.assertEqual(self.window.results_tabs.tabText(0), "Detected Peaks (2)")
         self.assertGreaterEqual(

@@ -37,6 +37,7 @@ from python_analyzer.core.identification import SpectrumIdentifier
 from python_analyzer.readers import read_spectrum_file, SpectrumFileFormatError
 from python_analyzer.analysis.models import AnalysisSettings, LoadedSpectrum
 from python_analyzer.analysis.runner import run_analysis as run_analysis_pipeline
+from python_analyzer.exporters import write_peaks_csv
 from python_analyzer.viz.spectrum_plot import SpectrumPlot
 from python_analyzer.gui.dialogs import SettingsDialog, LogWindow, AnalysisSettingsDialog
 from python_analyzer.gui.log_view import (
@@ -258,9 +259,17 @@ class MainWindow(QMainWindow):
         self.results_tabs = QTabWidget()
 
         self.peak_table = QTableWidget()
-        self.peak_table.setColumnCount(6)
+        self.peak_table.setColumnCount(7)
         self.peak_table.setHorizontalHeaderLabels(
-            ["Frequency (Hz)", "Bin", "Intensity", "Width (bins)", "Area", "SNR"]
+            [
+                "Frequency (Hz)",
+                "Bin",
+                "Intensity",
+                "Width (bins)",
+                "Width (Hz)",
+                "Area",
+                "SNR",
+            ]
         )
         self.peak_table.setAlternatingRowColors(True)
         self.peak_table.verticalHeader().setVisible(False)
@@ -637,6 +646,7 @@ class MainWindow(QMainWindow):
                 self._format_peak_value(getattr(peak, "position", None), precision=7),
                 self._format_peak_value(getattr(peak, "intensity", None), precision=7),
                 self._format_peak_value(getattr(peak, "width", None)),
+                self._format_peak_value(getattr(peak, "width_hz", None)),
                 self._format_peak_value(getattr(peak, "area", None)),
                 self._format_peak_value(getattr(peak, "snr", None)),
             ]
@@ -1034,16 +1044,25 @@ class MainWindow(QMainWindow):
             c.drawString(margin, y, "Detected Peaks")
             y -= 20
 
-            c.setFont("Helvetica-Bold", 9)
-            c.drawString(margin, y, "Frequency Hz")
-            c.drawString(margin + 88, y, "Bin")
-            c.drawString(margin + 135, y, "Intensity")
-            c.drawString(margin + 205, y, "Width")
-            c.drawString(margin + 270, y, "Area")
-            c.drawString(margin + 350, y, "SNR")
-            y -= 13
-            c.line(margin, y, width - margin, y)
-            y -= 12
+            peak_columns = [
+                ("Freq Hz", 0),
+                ("Bin", 75),
+                ("Intensity", 118),
+                ("Width bin", 178),
+                ("Width Hz", 245),
+                ("Area", 312),
+                ("SNR", 390),
+            ]
+
+            def draw_peak_header(current_y):
+                c.setFont("Helvetica-Bold", 9)
+                for label, offset in peak_columns:
+                    c.drawString(margin + offset, current_y, label)
+                current_y -= 13
+                c.line(margin, current_y, width - margin, current_y)
+                return current_y - 12
+
+            y = draw_peak_header(y)
 
             c.setFont("Helvetica", 9)
             peaks = self.current_result["peaks"]
@@ -1051,24 +1070,19 @@ class MainWindow(QMainWindow):
                 for peak in peaks:
                     if y < 90:
                         c.showPage()
-                        y = height - margin
-                        c.setFont("Helvetica-Bold", 9)
-                        c.drawString(margin, y, "Frequency Hz")
-                        c.drawString(margin + 88, y, "Bin")
-                        c.drawString(margin + 135, y, "Intensity")
-                        c.drawString(margin + 205, y, "Width")
-                        c.drawString(margin + 270, y, "Area")
-                        c.drawString(margin + 350, y, "SNR")
-                        y -= 13
-                        c.line(margin, y, width - margin, y)
-                        y -= 12
+                        y = draw_peak_header(height - margin)
                         c.setFont("Helvetica", 9)
                     c.drawString(margin, y, self._format_peak_value(self._peak_frequency(peak)))
-                    c.drawString(margin + 88, y, self._format_peak_value(peak.position))
-                    c.drawString(margin + 135, y, self._format_peak_value(peak.intensity))
-                    c.drawString(margin + 205, y, self._format_peak_value(peak.width))
-                    c.drawString(margin + 270, y, self._format_peak_value(peak.area))
-                    c.drawString(margin + 350, y, self._format_peak_value(peak.snr))
+                    c.drawString(margin + 75, y, self._format_peak_value(peak.position))
+                    c.drawString(margin + 118, y, self._format_peak_value(peak.intensity))
+                    c.drawString(margin + 178, y, self._format_peak_value(peak.width))
+                    c.drawString(
+                        margin + 245,
+                        y,
+                        self._format_peak_value(getattr(peak, "width_hz", None)),
+                    )
+                    c.drawString(margin + 312, y, self._format_peak_value(peak.area))
+                    c.drawString(margin + 390, y, self._format_peak_value(peak.snr))
                     y -= 14
             else:
                 c.drawString(margin, y, "No peaks detected.")
@@ -1171,22 +1185,23 @@ class MainWindow(QMainWindow):
             return
 
         try:
-            with open(file, "w", newline="", encoding="utf-8") as csv_file:
-                writer = csv.writer(csv_file)
-                writer.writerow(
-                    ["frequency_hz", "position", "intensity", "width", "area", "snr"]
-                )
-                for peak in peaks:
-                    writer.writerow(
-                        [
-                            self._peak_frequency(peak),
-                            peak.position,
-                            peak.intensity,
-                            peak.width,
-                            peak.area,
-                            peak.snr,
-                        ]
-                    )
+            metadata = {
+                "source_file": self.display_source_name(),
+                "sample_rate_hz": self.current_result.get(
+                    "sample_rate",
+                    self.sample_rate,
+                ),
+                "filter_type": self.filter_type,
+                "baseline": self.current_result.get(
+                    "baseline_method",
+                    self.baseline_method if self.baseline_enabled else "none",
+                ),
+                "normalization": self.current_result.get(
+                    "normalization",
+                    "area" if self.normalize_area else "none",
+                ),
+            }
+            write_peaks_csv(file, peaks, metadata)
 
             QMessageBox.information(self, "Success", f"Peak list saved:\n{file}")
             self.log(
