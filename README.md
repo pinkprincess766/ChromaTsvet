@@ -40,11 +40,11 @@ identification are planned after v0.1.
 - Apply median or Savitzky-Golay filtering and baseline correction.
 - Calculate an FFT spectrum using a configurable sample rate and frequency axis.
 - Normalize a spectrum by integral area when comparable intensity scaling is needed.
-- Detect peaks and calculate frequency, intensity, FWHM width, Gaussian area, and SNR.
+- Detect peaks and calculate frequency, intensity, FWHM width in bins/Hz, Gaussian area, and SNR.
 - Inspect detected peaks in the plot and in a detailed analysis table.
 - Zoom into the spectrum with the mouse.
 - Compare spectra against a local SQLite reference library.
-- Export detected peaks to CSV and complete analysis results to PDF.
+- Export detected peaks with analysis metadata to CSV and complete analysis results to PDF.
 - Use light and dark application themes.
 
 ## Screenshots
@@ -134,7 +134,7 @@ sample rate is required to convert FFT bins into physical frequency values.
 1. Open a CSV or TXT signal file.
 2. Configure sample rate, filtering, baseline correction, and peak-detection parameters.
 3. Run the analysis and inspect marked peaks on the frequency plot.
-4. Review peak frequency, intensity, width, area, and SNR in the results table.
+4. Review peak frequency, intensity, width in bins/Hz, area, and SNR in the results table.
 5. Export the peak list as CSV or generate a PDF analysis report.
 
 ## Development
@@ -158,6 +158,10 @@ Regenerate the v0.1 PNG screenshot set:
 QT_QPA_PLATFORM=offscreen python tools/capture_release_screenshots.py
 ```
 
+See [Development Notes](docs/development.md) for the current maturin workflow
+and performance profiling procedure. See [Peak-Based Identification Plan](docs/identification.md)
+for the planned replacement of the current baseline cosine matcher.
+
 ## Architecture
 
 ```text
@@ -169,6 +173,7 @@ python_analyzer/
   gui/log_view.py            Shared log-view formatting
   analysis/models.py         AnalysisSettings and LoadedSpectrum dataclasses
   analysis/runner.py         Filter -> Rust pipeline wrapper
+  exporters/peak_csv.py      Detected peak CSV export
   readers/spectrum_reader.py CSV/TXT spectrum parsing
   viz/spectrum_plot.py       Spectrum plotting, frequency axis, peak markers
   core/identification.py     SQLite-backed reference matching
@@ -193,6 +198,8 @@ Version 0.1 is the first public release: the application can load data, perform
 an analysis, visualize and export its results, and preserve user settings. The
 next development priorities are stronger peak-based substance matching,
 cross-platform packaged builds, and a richer reference-library workflow.
+The identification direction is outlined in
+[Peak-Based Identification Plan](docs/identification.md).
 
 ## License
 
