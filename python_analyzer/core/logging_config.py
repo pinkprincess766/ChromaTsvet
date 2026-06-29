@@ -43,10 +43,10 @@ def setup_logging(
     if file_handler is None:
         try:
             log_path = _prepare_log_path(app_name, log_filename)
-        except (OSError, RuntimeError):
+        except (OSError, RuntimeError) as exc:
             app_logger.warning(
-                "Could not determine a writable log directory; stderr logging remains active",
-                exc_info=True,
+                "Could not determine a writable log directory (%s); stderr logging remains active",
+                type(exc).__name__,
             )
             return app_logger
         if log_path is None:
@@ -61,18 +61,17 @@ def setup_logging(
                 backupCount=3,
                 encoding="utf-8",
             )
-        except OSError:
+        except OSError as exc:
             app_logger.warning(
-                "Could not create rotating log file at %s; stderr logging remains active",
-                log_path,
-                exc_info=True,
+                "Could not create rotating log file (%s); stderr logging remains active",
+                type(exc).__name__,
             )
         else:
             file_handler.setLevel(file_level)
             file_handler.setFormatter(formatter)
             setattr(file_handler, _HANDLER_MARKER, "file")
             app_logger.addHandler(file_handler)
-            app_logger.debug("File logging enabled: %s", log_path)
+            app_logger.debug("File logging enabled: %s", log_path.name)
 
     if file_handler is not None:
         file_handler.setLevel(file_level)

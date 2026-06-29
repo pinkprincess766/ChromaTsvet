@@ -18,6 +18,8 @@ class AnalysisSettings:
     peak_distance: int
     normalize_area: bool
     window_type: str = "hann"
+    peak_frequency_tolerance: float = 5.0  # Hz or appropriate units for peak matching
+    data_type: str = "generic"  # e.g. "ir", "raman", "ms", "fluorescence"
 
 
 @dataclass
@@ -25,3 +27,38 @@ class LoadedSpectrum:
     data: list[float]
     file_path: str | None
     file_name: str
+
+
+@dataclass
+class ReferencePeak:
+    """A peak feature stored for a reference compound."""
+    frequency: float
+    intensity: float
+    width: float = 0.0
+    width_hz: float = 0.0
+    area: float = 0.0
+    snr: float = 0.0
+
+
+@dataclass
+class PeakMatch:
+    """Result of matching one unknown peak to one reference peak."""
+    unknown_frequency: float
+    reference_frequency: float
+    frequency_diff: float
+    intensity_ratio: float
+    score: float
+    unknown_index: int = -1
+    reference_index: int = -1
+
+
+@dataclass
+class PeakBasedMatchResult:
+    """Result of peak-based identification."""
+    substance_name: str
+    formula: str
+    score: float
+    matched_peaks: list[PeakMatch]
+    unmatched_unknown: list[ReferencePeak]
+    unmatched_reference: list[ReferencePeak]
+    num_matched: int

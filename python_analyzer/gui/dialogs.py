@@ -12,6 +12,7 @@ from PyQt5.QtWidgets import (
 from PyQt5.QtCore import Qt
 from PyQt5.QtGui import QFont, QFontDatabase, QTextCursor
 
+from python_analyzer.core.identification import DATA_TYPE_CHOICES, normalize_data_type
 from python_analyzer.gui.log_view import append_log_entry, log_level_from_entry
 from python_analyzer.gui.theme import FONT_CANDIDATES
 
@@ -283,6 +284,33 @@ class AnalysisSettingsDialog(QDialog):
         peak_form.addRow("Distance", self.distance_spin)
         layout.addWidget(peak_group)
 
+        identification_group = QGroupBox("Identification")
+        identification_form = QFormLayout(identification_group)
+        identification_form.setHorizontalSpacing(14)
+        identification_form.setVerticalSpacing(10)
+
+        self.data_type_combo = QComboBox()
+        for label, value in DATA_TYPE_CHOICES:
+            self.data_type_combo.addItem(label, value)
+        data_type_index = self.data_type_combo.findData(
+            normalize_data_type(getattr(parent, "data_type", "generic"))
+        )
+        self.data_type_combo.setCurrentIndex(max(0, data_type_index))
+        self.data_type_combo.setToolTip("Reference library entries are matched only against compatible data types")
+        identification_form.addRow("Data type", self.data_type_combo)
+
+        self.peak_tolerance_spin = QDoubleSpinBox()
+        self.peak_tolerance_spin.setRange(0.001, 1_000_000.0)
+        self.peak_tolerance_spin.setDecimals(3)
+        self.peak_tolerance_spin.setSingleStep(1.0)
+        self.peak_tolerance_spin.setSuffix(" Hz")
+        self.peak_tolerance_spin.setValue(
+            getattr(parent, "peak_frequency_tolerance", 5.0)
+        )
+        self.peak_tolerance_spin.setToolTip("Maximum frequency difference allowed when matching peaks")
+        identification_form.addRow("Peak tolerance", self.peak_tolerance_spin)
+        layout.addWidget(identification_group)
+
         hint = QLabel("Apply saves the settings and reruns the current analysis.")
         hint.setWordWrap(True)
         layout.addWidget(hint)
@@ -324,4 +352,6 @@ class AnalysisSettingsDialog(QDialog):
             filter_params=filter_params,
             sample_rate=self.sample_rate_spin.value(),
             normalize_area=self.normalize_area_checkbox.isChecked(),
+            peak_frequency_tolerance=self.peak_tolerance_spin.value(),
+            data_type=self.data_type_combo.currentData(),
         )

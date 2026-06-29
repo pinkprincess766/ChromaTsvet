@@ -31,8 +31,10 @@ Semyonovich Tsvet, the botanist who invented chromatography.
 ChromaTsvet v0.1.0 is a first public, source-based release. It is ready for
 local experiments, demonstrations, and iterative scientific tooling work, but it
 is not yet a validated laboratory instrument. Continuous integration runs the
-Python and Rust test suites; packaged installers and stronger peak-based
-identification are planned after v0.1.
+Python and Rust test suites. Peak-based identification is now available as an
+inspectable baseline with legacy cosine matching kept as a compatibility
+fallback; packaged installers and richer reference-library workflows are planned
+after v0.1.
 
 ## Highlights
 
@@ -159,8 +161,8 @@ QT_QPA_PLATFORM=offscreen python tools/capture_release_screenshots.py
 ```
 
 See [Development Notes](docs/development.md) for the current maturin workflow
-and performance profiling procedure. See [Peak-Based Identification Plan](docs/identification.md)
-for the planned replacement of the current baseline cosine matcher.
+and performance profiling procedure. See [Peak-Based Identification](docs/identification.md)
+for the current peak-based matcher and legacy cosine fallback behavior.
 
 ## Architecture
 
@@ -196,10 +198,9 @@ through PyO3.
 
 Version 0.1 is the first public release: the application can load data, perform
 an analysis, visualize and export its results, and preserve user settings. The
-next development priorities are stronger peak-based substance matching,
-cross-platform packaged builds, and a richer reference-library workflow.
-The identification direction is outlined in
-[Peak-Based Identification Plan](docs/identification.md).
+next development priorities are richer peak-match diagnostics, cross-platform
+packaged builds, and a stronger reference-library workflow. The identification
+model is outlined in [Peak-Based Identification](docs/identification.md).
 
 ## License
 
