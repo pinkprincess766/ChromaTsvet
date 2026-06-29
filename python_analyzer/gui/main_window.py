@@ -33,7 +33,12 @@ from PIL import Image
 from paths import ensure_rust_in_path, get_library_db_path, get_project_root
 
 # Local imports
-from python_analyzer.core.identification import SpectrumIdentifier
+from python_analyzer.core.identification import (
+    MatchResult,
+    SpectrumIdentifier,
+    normalize_data_type,
+    peak_to_reference_peak,
+)
 from python_analyzer.readers import read_spectrum_file, SpectrumFileFormatError
 from python_analyzer.analysis.models import AnalysisSettings, LoadedSpectrum
 from python_analyzer.analysis.runner import run_analysis as run_analysis_pipeline
@@ -64,6 +69,7 @@ DEFAULT_PEAK_DISTANCE = 1
 DEFAULT_FILTER_TYPE = "median"
 DEFAULT_NORMALIZE_AREA = False
 APP_LOGO_PATH = get_project_root() / "assets" / "chromatsvet_logo.png"
+DEBUG_TRACEBACK_ENV = "CHROMATSVET_DEBUG_TRACEBACKS"
 
 # Setup logging (from original)
 try:
@@ -114,6 +120,26 @@ def saved_int(settings, key, default, minimum, maximum):
         return max(minimum, min(maximum, int(settings.value(key, default))))
     except (TypeError, ValueError):
         return default
+
+def debug_tracebacks_enabled():
+    value = os.environ.get(DEBUG_TRACEBACK_ENV, "")
+    return str(value).strip().lower() in ("1", "true", "yes", "on")
+
+def display_file_label(path):
+    try:
+        return Path(path).name or "selected file"
+    except (TypeError, ValueError):
+        return "selected file"
+
+def safe_exception_details(exception):
+    if isinstance(exception, OSError):
+        if getattr(exception, "strerror", None):
+            return exception.strerror
+        details = str(exception).strip()
+        if details and not getattr(exception, "filename", None):
+            return details
+        return type(exception).__name__
+    return str(exception).strip() or repr(exception)
 
 def normalized_filter_settings(filter_type, filter_params=None):
     try:
@@ -184,6 +210,10 @@ class MainWindow(QMainWindow):
         self.normalize_area = saved_bool(
             self.settings, "analysis/normalize_area", DEFAULT_NORMALIZE_AREA
         )
+        self.peak_frequency_tolerance = saved_float(
+            self.settings, "analysis/peak_frequency_tolerance", 5.0, 0.1, 1000.0
+        )
+        self.data_type = self.settings.value("analysis/data_type", "generic") or "generic"
 
         self.analysis_settings = self._build_analysis_settings()
 
@@ -348,6 +378,15 @@ class MainWindow(QMainWindow):
         self.log_window.raise_()
         self.log_window.activateWindow()
 
+    def closeEvent(self, event):
+        close_identifier = getattr(getattr(self, "identifier", None), "close", None)
+        if callable(close_identifier):
+            try:
+                close_identifier()
+            except Exception:
+                logger.warning("Could not close reference database connection")
+        super().closeEvent(event)
+
     def set_analysis_settings(
         self,
         baseline_enabled,
@@ -359,6 +398,8 @@ class MainWindow(QMainWindow):
         filter_params=None,
         sample_rate=DEFAULT_SAMPLE_RATE,
         normalize_area=DEFAULT_NORMALIZE_AREA,
+        peak_frequency_tolerance=5.0,
+        data_type="generic",
     ):
         try:
             normalized_filter_type, normalized_filter_params = (
@@ -379,6 +420,11 @@ class MainWindow(QMainWindow):
                 0.001, min(10_000_000.0, float(sample_rate))
             )
             normalized_area_enabled = bool(normalize_area)
+            normalized_tolerance = max(
+                0.1,
+                min(1_000_000.0, float(peak_frequency_tolerance)),
+            )
+            normalized_data_type = normalize_data_type(data_type)
         except (filters.FilterError, TypeError, ValueError) as exc:
             self._show_error(
                 "Invalid analysis settings",
@@ -397,6 +443,8 @@ class MainWindow(QMainWindow):
         self.filter_type = normalized_filter_type
         self.filter_params = normalized_filter_params
         self.normalize_area = normalized_area_enabled
+        self.peak_frequency_tolerance = normalized_tolerance
+        self.data_type = normalized_data_type
 
         self.analysis_settings = self._build_analysis_settings()
 
@@ -412,6 +460,11 @@ class MainWindow(QMainWindow):
             "analysis/filter_params",
             json.dumps(self.filter_params, sort_keys=True, separators=(",", ":")),
         )
+        self.settings.setValue(
+            "analysis/peak_frequency_tolerance",
+            self.peak_frequency_tolerance,
+        )
+        self.settings.setValue("analysis/data_type", self.data_type)
         self.settings.sync()
         if self.settings.status() != QSettings.NoError:
             self.log(
@@ -487,7 +540,7 @@ class MainWindow(QMainWindow):
         timestamp = datetime.now().strftime("%H:%M:%S")
         label = LOG_LEVEL_LABELS[normalized_level]
         entry = f"[{timestamp}] [{label}] {msg}"
-        if exc_info:
+        if exc_info and debug_tracebacks_enabled():
             logger.exception(msg)
         else:
             logger.log(
@@ -528,7 +581,7 @@ class MainWindow(QMainWindow):
     ):
         log_message = user_message
         if exception is not None:
-            details = str(exception).strip() or repr(exception)
+            details = safe_exception_details(exception)
             log_message = f"{user_message} ({type(exception).__name__}: {details})"
 
         self.log(
@@ -609,6 +662,8 @@ class MainWindow(QMainWindow):
             peak_distance=self.peak_distance,
             normalize_area=self.normalize_area,
             window_type=DEFAULT_WINDOW_TYPE,
+            peak_frequency_tolerance=getattr(self, "peak_frequency_tolerance", 5.0),
+            data_type=getattr(self, "data_type", "generic"),
         )
 
     def _readonly_table_item(self, value):
@@ -676,12 +731,13 @@ class MainWindow(QMainWindow):
             return
 
         file_path = Path(file)
+        file_label = display_file_label(file_path)
         try:
             if file_path.stat().st_size == 0:
                 self._show_warning(
                     "Empty file",
                     "The selected file is empty.",
-                    log_message=f"Empty spectrum file selected: {file_path}",
+                    log_message=f"Empty spectrum file selected: {file_label}",
                     status_message="Empty spectrum file",
                 )
                 return
@@ -691,7 +747,7 @@ class MainWindow(QMainWindow):
             self._show_warning(
                 "Unsupported spectrum format",
                 str(exc),
-                log_message=f"Invalid spectrum file format in {file_path}: {exc}",
+                log_message=f"Invalid spectrum file format in {file_label}: {exc}",
                 status_message="Unsupported spectrum file format",
             )
             return
@@ -718,7 +774,7 @@ class MainWindow(QMainWindow):
                 "No spectrum data",
                 "No numeric values were found. Check the file format and delimiter.",
                 log_message=(
-                    f"No numeric values found in {file_path}; "
+                    f"No numeric values found in {file_label}; "
                     f"non-numeric rows: {len(skipped_rows)}"
                 ),
                 status_message="No numeric spectrum data found",
@@ -735,7 +791,7 @@ class MainWindow(QMainWindow):
                 f"Skipped rows: {len(skipped_rows)}\n\n"
                 f"Problematic values:\n{examples}",
                 log_message=(
-                    f"Loaded {file_path} with {len(skipped_rows)} skipped rows "
+                    f"Loaded {file_label} with {len(skipped_rows)} skipped rows "
                     f"and {len(data)} valid points"
                 ),
                 status_message=f"Loaded with {len(skipped_rows)} skipped rows",
@@ -752,7 +808,7 @@ class MainWindow(QMainWindow):
         )
         self._update_file_display()
         self.log(
-            f"Loaded file: {self.current_file_path} ({len(data)} points)",
+            f"Loaded file: {self.current_file_name} ({len(data)} points)",
             status_message=f"Loaded: {self.current_file_name}",
         )
         self.run_analysis()
@@ -795,7 +851,36 @@ class MainWindow(QMainWindow):
             spectrum = np.asarray(result.get("spectrum", []), dtype=float)
             frequency_axis = self.spectrum_plot.frequency_axis(result, len(spectrum))
             peaks = result.get("peaks", [])
-            matches = self.identifier.find_matches(spectrum)
+            self.current_peaks = peaks  # store for adding references with peak data
+
+            # Prefer peak-based matching if peaks are available
+            if peaks:
+                try:
+                    tol = getattr(self.analysis_settings, "peak_frequency_tolerance", 5.0)
+                    dtype = getattr(self.analysis_settings, "data_type", None)
+                    peak_matches = self.identifier.find_peak_matches(
+                        peaks,
+                        frequency_tolerance=tol,
+                        data_type=dtype,
+                    )
+                    matches = [
+                        MatchResult(
+                            substance_name=m.substance_name,
+                            formula=m.formula,
+                            score=m.score,
+                            compared_points=m.num_matched,
+                        )
+                        for m in peak_matches
+                    ][:10]  # limit for UI
+                except Exception as exc:
+                    self.log(
+                        "Peak-based identification failed; falling back to legacy matching "
+                        f"({type(exc).__name__}: {exc})",
+                        level="warning",
+                    )
+                    matches = self.identifier.find_matches(spectrum)
+            else:
+                matches = self.identifier.find_matches(spectrum)
 
             self.spectrum_plot.clear()
             plot_title = (
@@ -862,7 +947,33 @@ class MainWindow(QMainWindow):
             return
 
         try:
-            added = self.identifier.add_reference(name, intensities, formula.strip())
+            # If we have current analyzed peaks, store them for future peak-based matching
+            current_peaks = []
+            if hasattr(self, "current_peaks") and self.current_peaks:
+                current_peaks = self.current_peaks
+            elif "peaks" in (getattr(self, "current_result", {}) or {}):
+                current_peaks = self.current_result.get("peaks", [])
+
+            if current_peaks:
+                ref_peaks = [
+                    reference_peak
+                    for p in current_peaks
+                    if (reference_peak := peak_to_reference_peak(p)) is not None
+                ]
+                if ref_peaks:
+                    dtype = getattr(self.analysis_settings, "data_type", "generic")
+                    added = self.identifier.add_reference(
+                        name,
+                        intensities,
+                        formula.strip(),
+                        peaks=ref_peaks,
+                        data_type=dtype,
+                    )
+                else:
+                    added = self.identifier.add_reference(name, intensities, formula.strip())
+            else:
+                added = self.identifier.add_reference(name, intensities, formula.strip())
+
             if added is False:
                 raise RuntimeError("the reference library rejected the new substance")
         except Exception as exc:
@@ -992,7 +1103,6 @@ class MainWindow(QMainWindow):
                 ("App version", APP_VERSION),
                 ("Rust core", spectrometer_rust.get_version()),
                 ("Source file", self.display_source_name()),
-                ("Source path", self.current_file_path or self.display_source_name()),
                 ("Data points", str(len(self.current_data) if self.current_data else 0)),
                 ("Peaks found", str(len(self.current_result["peaks"]))),
             ]
@@ -1020,6 +1130,8 @@ class MainWindow(QMainWindow):
                 ("Filter params", self.filter_params),
                 ("Baseline", baseline_description),
                 ("Normalization", normalization_description),
+                ("Data type", self.data_type),
+                ("Peak tolerance", f"{self.peak_frequency_tolerance:g} Hz"),
                 ("Threshold", f"{self.peak_threshold:.3f}"),
                 ("Prominence", "automatic" if self.peak_prominence == 0 else f"{self.peak_prominence:g}"),
                 ("Distance", f"{self.peak_distance} points"),
@@ -1125,7 +1237,7 @@ class MainWindow(QMainWindow):
             c.save()
             QMessageBox.information(self, "Success", f"PDF report saved:\n{file}")
             self.log(
-                f"PDF report created: {file}",
+                f"PDF report created: {display_file_label(file)}",
                 status_message=f"PDF report saved: {Path(file).name}",
             )
         except PermissionError as exc:
@@ -1149,8 +1261,8 @@ class MainWindow(QMainWindow):
                     os.unlink(plot_path)
                 except OSError as exc:
                     self.log(
-                        f"Could not remove temporary report image: {plot_path} "
-                        f"({type(exc).__name__}: {exc})",
+                        f"Could not remove temporary report image: {display_file_label(plot_path)} "
+                        f"({type(exc).__name__}: {safe_exception_details(exc)})",
                         status_message="Temporary report file could not be removed",
                         level="warning",
                     )
@@ -1200,12 +1312,14 @@ class MainWindow(QMainWindow):
                     "normalization",
                     "area" if self.normalize_area else "none",
                 ),
+                "data_type": self.data_type,
+                "peak_frequency_tolerance_hz": self.peak_frequency_tolerance,
             }
             write_peaks_csv(file, peaks, metadata)
 
             QMessageBox.information(self, "Success", f"Peak list saved:\n{file}")
             self.log(
-                f"Peak list exported: {file} ({len(peaks)} peaks)",
+                f"Peak list exported: {display_file_label(file)} ({len(peaks)} peaks)",
                 status_message=f"Peak list saved: {Path(file).name}",
             )
         except PermissionError as exc:

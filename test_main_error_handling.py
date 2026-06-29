@@ -1,4 +1,5 @@
 import csv
+import json
 from pathlib import Path
 import sqlite3
 from tempfile import TemporaryDirectory
@@ -11,14 +12,25 @@ from PyQt5.QtCore import QSettings
 from PyQt5.QtWidgets import QApplication, QMessageBox
 
 import python_analyzer.main as main
-from python_analyzer.core.identification import MatchResult, SpectrumIdentifier
+from python_analyzer.analysis.models import ReferencePeak
+from python_analyzer.core.identification import (
+    MatchResult,
+    SpectrumIdentifier,
+    compute_peak_based_score,
+    find_peak_matches,
+    normalize_data_type,
+    peak_to_reference_peak,
+)
 
 
 class FakeIdentifier:
     def find_matches(self, spectrum):
         return []
 
-    def add_reference(self, name, intensities, formula):
+    def find_peak_matches(self, unknown_peaks, frequency_tolerance=5.0, data_type=None):
+        return []
+
+    def add_reference(self, name, intensities, formula, peaks=None, data_type="generic"):
         return True
 
     def clear_database(self):
@@ -255,6 +267,8 @@ class MainWindowErrorHandlingTest(unittest.TestCase):
                 "filter_type",
                 "baseline",
                 "normalization",
+                "data_type",
+                "peak_frequency_tolerance_hz",
                 "frequency_hz",
                 "position_bin",
                 "intensity",
@@ -272,6 +286,8 @@ class MainWindowErrorHandlingTest(unittest.TestCase):
                 "median",
                 "improved",
                 "none",
+                "generic",
+                "5.0",
                 "62.0",
                 "124.0",
                 "0.854",
@@ -355,10 +371,14 @@ class MainWindowErrorHandlingTest(unittest.TestCase):
             filter_params=self.window.filter_params,
             sample_rate=2_500.0,
             normalize_area=True,
+            peak_frequency_tolerance=12.5,
+            data_type="Raman!",
         )
 
         self.assertTrue(self.window.normalize_area)
         self.assertEqual(self.window.sample_rate, 2_500.0)
+        self.assertEqual(self.window.peak_frequency_tolerance, 12.5)
+        self.assertEqual(self.window.data_type, "raman")
         self.assertTrue(
             main.saved_bool(
                 self.window.settings,
@@ -378,6 +398,21 @@ class MainWindowErrorHandlingTest(unittest.TestCase):
         )
         self.assertEqual(self.process_signal.call_args.kwargs["sample_rate"], 2_500.0)
         self.assertTrue(self.process_signal.call_args.kwargs["normalize"])
+
+    def test_analysis_dialog_applies_identification_settings(self):
+        dialog = main.AnalysisSettingsDialog(self.window)
+        try:
+            dialog.peak_tolerance_spin.setValue(17.25)
+            dialog.data_type_combo.setCurrentIndex(
+                dialog.data_type_combo.findData("raman")
+            )
+
+            dialog.apply_settings()
+        finally:
+            dialog.close()
+
+        self.assertEqual(self.window.peak_frequency_tolerance, 17.25)
+        self.assertEqual(self.window.data_type, "raman")
 
     def test_identification_table_uses_compared_points(self):
         self.window.identifier.find_matches = lambda spectrum: [
@@ -410,6 +445,52 @@ class MainWindowErrorHandlingTest(unittest.TestCase):
 
         self.assertEqual(self.window.table.item(0, 3).text(), "3")
 
+    def test_add_substance_stores_object_peaks(self):
+        class RecordingIdentifier(FakeIdentifier):
+            def __init__(self):
+                self.add_calls = []
+
+            def add_reference(
+                self,
+                name,
+                intensities,
+                formula,
+                peaks=None,
+                data_type="generic",
+            ):
+                self.add_calls.append((name, intensities, formula, peaks, data_type))
+                return True
+
+        identifier = RecordingIdentifier()
+        self.window.identifier = identifier
+        self.window.current_peaks = [
+            SimpleNamespace(
+                frequency=100.0,
+                intensity=1.5,
+                width=2.0,
+                width_hz=20.0,
+                area=3.0,
+                snr=12.0,
+            )
+        ]
+        self.window.analysis_settings.data_type = "raman"
+
+        answers = [("Reference", True), ("R", True), ("1.0,2.0", True)]
+        with (
+            patch.object(main.QInputDialog, "getText", side_effect=answers),
+            patch.object(QMessageBox, "information", return_value=QMessageBox.Ok),
+        ):
+            self.window.add_substance()
+
+        self.assertEqual(len(identifier.add_calls), 1)
+        name, intensities, formula, peaks, data_type = identifier.add_calls[0]
+        self.assertEqual(name, "Reference")
+        self.assertEqual(intensities, [1.0, 2.0])
+        self.assertEqual(formula, "R")
+        self.assertEqual(data_type, "raman")
+        self.assertEqual(peaks[0].frequency, 100.0)
+        self.assertEqual(peaks[0].width_hz, 20.0)
+
 
 class IdentifierErrorPropagationTest(unittest.TestCase):
     def test_match_result_accepts_legacy_matched_points_keyword(self):
@@ -425,13 +506,16 @@ class IdentifierErrorPropagationTest(unittest.TestCase):
                 side_effect=sqlite3.OperationalError("database unavailable"),
             ),
             patch(
-                "python_analyzer.core.identification.logger.exception"
-            ) as log_exception,
+                "python_analyzer.core.identification.logger.error"
+            ) as log_error,
         ):
             with self.assertRaisesRegex(sqlite3.OperationalError, "database unavailable"):
                 SpectrumIdentifier("/unavailable/library.db")
 
-        log_exception.assert_called_once()
+        log_error.assert_called_once()
+        logged_args = " ".join(str(arg) for arg in log_error.call_args.args)
+        self.assertIn("library.db", logged_args)
+        self.assertNotIn("/unavailable", logged_args)
 
     def test_find_matches_reports_compared_points(self):
         identifier = SpectrumIdentifier(":memory:")
@@ -443,6 +527,172 @@ class IdentifierErrorPropagationTest(unittest.TestCase):
 
         self.assertEqual(matches[0].compared_points, 3)
         self.assertEqual(matches[0].matched_points, 3)
+
+    def test_peak_to_reference_peak_accepts_object_peaks(self):
+        peak = SimpleNamespace(
+            frequency=42.0,
+            intensity=2.5,
+            width=3.0,
+            width_hz=7.5,
+            area=9.0,
+            snr=11.0,
+        )
+
+        reference_peak = peak_to_reference_peak(peak)
+
+        self.assertEqual(reference_peak.frequency, 42.0)
+        self.assertEqual(reference_peak.intensity, 2.5)
+        self.assertEqual(reference_peak.width_hz, 7.5)
+
+    def test_peak_to_reference_peak_rejects_non_finite_values(self):
+        peak = {"frequency": float("nan"), "intensity": 1.0}
+
+        self.assertIsNone(peak_to_reference_peak(peak))
+
+    def test_data_type_is_normalized_to_known_values(self):
+        self.assertEqual(normalize_data_type("RAMAN!"), "raman")
+        self.assertEqual(normalize_data_type("unknown custom type"), "generic")
+
+    def test_peak_matching_is_one_to_one(self):
+        unknown_peaks = [
+            ReferencePeak(frequency=100.0, intensity=1.0),
+            ReferencePeak(frequency=101.0, intensity=1.0),
+        ]
+        reference_peaks = [ReferencePeak(frequency=100.5, intensity=1.0)]
+
+        matches = find_peak_matches(
+            unknown_peaks,
+            reference_peaks,
+            frequency_tolerance=5.0,
+        )
+        score = compute_peak_based_score(matches, len(unknown_peaks), len(reference_peaks))
+
+        self.assertEqual(len(matches), 1)
+        self.assertEqual(matches[0].reference_index, 0)
+        self.assertLess(score, 0.95)
+
+    def test_peak_matching_respects_tolerance(self):
+        matches = find_peak_matches(
+            [ReferencePeak(frequency=100.0, intensity=1.0)],
+            [ReferencePeak(frequency=106.0, intensity=1.0)],
+            frequency_tolerance=5.0,
+        )
+
+        self.assertEqual(matches, [])
+
+    def test_peak_matching_log_ratio_scoring_is_symmetric(self):
+        high_unknown = find_peak_matches(
+            [ReferencePeak(frequency=100.0, intensity=2.0)],
+            [ReferencePeak(frequency=100.0, intensity=1.0)],
+            frequency_tolerance=5.0,
+        )
+        high_reference = find_peak_matches(
+            [ReferencePeak(frequency=100.0, intensity=1.0)],
+            [ReferencePeak(frequency=100.0, intensity=2.0)],
+            frequency_tolerance=5.0,
+        )
+
+        self.assertEqual(high_unknown[0].score, high_reference[0].score)
+
+    def test_peak_reference_migrates_old_database_and_round_trips(self):
+        with TemporaryDirectory() as temp_dir:
+            db_path = Path(temp_dir) / "library.db"
+            conn = sqlite3.connect(db_path)
+            try:
+                conn.execute(
+                    """
+                    CREATE TABLE compounds (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        name TEXT NOT NULL,
+                        formula TEXT,
+                        spectrum TEXT NOT NULL
+                    )
+                    """
+                )
+                conn.commit()
+            finally:
+                conn.close()
+
+            identifier = SpectrumIdentifier(db_path)
+            try:
+                added = identifier.add_reference(
+                    "PeakOnly",
+                    None,
+                    "P",
+                    peaks=[
+                        ReferencePeak(
+                            frequency=100.0,
+                            intensity=1.0,
+                            width=2.0,
+                            width_hz=20.0,
+                            area=3.0,
+                            snr=8.0,
+                        )
+                    ],
+                    data_type="Raman",
+                )
+
+                row = identifier.conn.execute(
+                    """
+                    SELECT spectrum, peaks_json, schema_version, data_type
+                    FROM compounds
+                    WHERE name = ?
+                    """,
+                    ("PeakOnly",),
+                ).fetchone()
+                matches = identifier.find_peak_matches(
+                    [SimpleNamespace(frequency=101.0, intensity=1.0)],
+                    frequency_tolerance=5.0,
+                    data_type="raman",
+                )
+            finally:
+                identifier.conn.close()
+
+        self.assertTrue(added)
+        self.assertEqual(row[0], "[]")
+        self.assertEqual(row[2], 2)
+        self.assertEqual(row[3], "raman")
+        self.assertEqual(json.loads(row[1])[0]["width_hz"], 20.0)
+        self.assertEqual(len(matches), 1)
+        self.assertEqual(matches[0].num_matched, 1)
+
+    def test_peak_matching_filters_by_data_type_with_generic_fallback(self):
+        identifier = SpectrumIdentifier(":memory:")
+        try:
+            identifier.add_reference(
+                "Raman",
+                None,
+                "R",
+                peaks=[ReferencePeak(frequency=100.0, intensity=1.0)],
+                data_type="raman",
+            )
+            identifier.add_reference(
+                "IR",
+                None,
+                "I",
+                peaks=[ReferencePeak(frequency=100.0, intensity=1.0)],
+                data_type="ir",
+            )
+            identifier.add_reference(
+                "Generic",
+                None,
+                "G",
+                peaks=[ReferencePeak(frequency=100.0, intensity=1.0)],
+                data_type="generic",
+            )
+
+            matches = identifier.find_peak_matches(
+                [ReferencePeak(frequency=100.0, intensity=1.0)],
+                frequency_tolerance=5.0,
+                data_type="raman",
+            )
+        finally:
+            identifier.conn.close()
+
+        self.assertEqual(
+            {match.substance_name for match in matches},
+            {"Raman", "Generic"},
+        )
 
     def test_restore_default_propagates_clear_failure(self):
         identifier = SpectrumIdentifier.__new__(SpectrumIdentifier)
