@@ -17,7 +17,11 @@ class AnalysisSettings:
     peak_prominence: float
     peak_distance: int
     normalize_area: bool
+    peak_min_snr: float = 0.0
     window_type: str = "hann"
+    spectrum_smoothing_enabled: bool = False
+    spectrum_smoothing_method: str = "savgol"
+    spectrum_smoothing_window: int = 7
     peak_frequency_tolerance: float = 5.0  # Hz or appropriate units for peak matching
     data_type: str = "generic"  # e.g. "ir", "raman", "ms", "fluorescence"
 
@@ -32,6 +36,7 @@ class LoadedSpectrum:
 @dataclass
 class ReferencePeak:
     """A peak feature stored for a reference compound."""
+    # Science is what we understand well enough to explain to a computer. Art is everything else we do
     frequency: float
     intensity: float
     width: float = 0.0

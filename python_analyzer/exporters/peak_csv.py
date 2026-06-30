@@ -14,6 +14,10 @@ PEAK_CSV_HEADERS = [
     "filter_type",
     "baseline",
     "normalization",
+    "spectrum_smoothing",
+    "spectrum_smoothing_method",
+    "spectrum_smoothing_window",
+    "peak_min_snr",
     "data_type",
     "peak_frequency_tolerance_hz",
     "frequency_hz",
@@ -25,7 +29,7 @@ PEAK_CSV_HEADERS = [
     "snr",
 ]
 
-_METADATA_COLUMNS = PEAK_CSV_HEADERS[:7]
+_METADATA_COLUMNS = PEAK_CSV_HEADERS[:11]
 
 
 def write_peaks_csv(

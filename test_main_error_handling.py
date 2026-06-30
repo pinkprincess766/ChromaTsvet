@@ -267,6 +267,10 @@ class MainWindowErrorHandlingTest(unittest.TestCase):
                 "filter_type",
                 "baseline",
                 "normalization",
+                "spectrum_smoothing",
+                "spectrum_smoothing_method",
+                "spectrum_smoothing_window",
+                "peak_min_snr",
                 "data_type",
                 "peak_frequency_tolerance_hz",
                 "frequency_hz",
@@ -286,6 +290,10 @@ class MainWindowErrorHandlingTest(unittest.TestCase):
                 "median",
                 "improved",
                 "none",
+                "False",
+                "none",
+                "0",
+                "0.0",
                 "generic",
                 "5.0",
                 "62.0",
@@ -371,12 +379,20 @@ class MainWindowErrorHandlingTest(unittest.TestCase):
             filter_params=self.window.filter_params,
             sample_rate=2_500.0,
             normalize_area=True,
+            peak_min_snr=4.5,
+            spectrum_smoothing_enabled=True,
+            spectrum_smoothing_method="savgol",
+            spectrum_smoothing_window=8,
             peak_frequency_tolerance=12.5,
             data_type="Raman!",
         )
 
         self.assertTrue(self.window.normalize_area)
         self.assertEqual(self.window.sample_rate, 2_500.0)
+        self.assertEqual(self.window.peak_min_snr, 4.5)
+        self.assertTrue(self.window.spectrum_smoothing_enabled)
+        self.assertEqual(self.window.spectrum_smoothing_method, "savgol")
+        self.assertEqual(self.window.spectrum_smoothing_window, 9)
         self.assertEqual(self.window.peak_frequency_tolerance, 12.5)
         self.assertEqual(self.window.data_type, "raman")
         self.assertTrue(
@@ -398,10 +414,23 @@ class MainWindowErrorHandlingTest(unittest.TestCase):
         )
         self.assertEqual(self.process_signal.call_args.kwargs["sample_rate"], 2_500.0)
         self.assertTrue(self.process_signal.call_args.kwargs["normalize"])
+        self.assertEqual(self.process_signal.call_args.kwargs["min_snr"], 4.5)
+        self.assertTrue(self.process_signal.call_args.kwargs["spectrum_smoothing"])
+        self.assertEqual(
+            self.process_signal.call_args.kwargs["spectrum_smoothing_method"],
+            "savgol",
+        )
+        self.assertEqual(
+            self.process_signal.call_args.kwargs["spectrum_smoothing_window"],
+            9,
+        )
 
     def test_analysis_dialog_applies_identification_settings(self):
         dialog = main.AnalysisSettingsDialog(self.window)
         try:
+            dialog.spectrum_smoothing_checkbox.setChecked(True)
+            dialog.spectrum_smoothing_window_spin.setValue(10)
+            dialog.min_snr_spin.setValue(3.25)
             dialog.peak_tolerance_spin.setValue(17.25)
             dialog.data_type_combo.setCurrentIndex(
                 dialog.data_type_combo.findData("raman")
@@ -411,6 +440,9 @@ class MainWindowErrorHandlingTest(unittest.TestCase):
         finally:
             dialog.close()
 
+        self.assertTrue(self.window.spectrum_smoothing_enabled)
+        self.assertEqual(self.window.spectrum_smoothing_window, 11)
+        self.assertEqual(self.window.peak_min_snr, 3.25)
         self.assertEqual(self.window.peak_frequency_tolerance, 17.25)
         self.assertEqual(self.window.data_type, "raman")
 

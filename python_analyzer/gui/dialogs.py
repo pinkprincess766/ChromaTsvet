@@ -227,6 +227,40 @@ class AnalysisSettingsDialog(QDialog):
         normalization_layout.addWidget(self.normalize_area_checkbox)
         layout.addWidget(normalization_group)
 
+        smoothing_group = QGroupBox("Spectrum smoothing")
+        smoothing_layout = QVBoxLayout(smoothing_group)
+        smoothing_layout.setSpacing(8)
+
+        self.spectrum_smoothing_checkbox = QCheckBox("Smooth spectrum before peak detection")
+        self.spectrum_smoothing_checkbox.setChecked(parent.spectrum_smoothing_enabled)
+        smoothing_layout.addWidget(self.spectrum_smoothing_checkbox)
+
+        smoothing_form = QFormLayout()
+        smoothing_form.setHorizontalSpacing(14)
+        smoothing_form.setVerticalSpacing(10)
+
+        self.spectrum_smoothing_method_combo = QComboBox()
+        self.spectrum_smoothing_method_combo.addItem("Savitzky-Golay", "savgol")
+        self.spectrum_smoothing_method_combo.addItem("Median", "median")
+        smoothing_index = self.spectrum_smoothing_method_combo.findData(
+            parent.spectrum_smoothing_method
+        )
+        self.spectrum_smoothing_method_combo.setCurrentIndex(max(0, smoothing_index))
+        smoothing_form.addRow("Method", self.spectrum_smoothing_method_combo)
+
+        self.spectrum_smoothing_window_spin = QSpinBox()
+        self.spectrum_smoothing_window_spin.setRange(3, 501)
+        self.spectrum_smoothing_window_spin.setSingleStep(2)
+        self.spectrum_smoothing_window_spin.setSuffix(" points")
+        self.spectrum_smoothing_window_spin.setValue(parent.spectrum_smoothing_window)
+        self.spectrum_smoothing_window_spin.valueChanged.connect(
+            self._ensure_odd_smoothing_window_size
+        )
+        self.spectrum_smoothing_window_spin.setToolTip("Odd smoothing window applied to the processed spectrum")
+        smoothing_form.addRow("Window", self.spectrum_smoothing_window_spin)
+        smoothing_layout.addLayout(smoothing_form)
+        layout.addWidget(smoothing_group)
+
         filter_group = QGroupBox("Signal filtering")
         filter_form = QFormLayout(filter_group)
         filter_form.setHorizontalSpacing(14)
@@ -276,6 +310,15 @@ class AnalysisSettingsDialog(QDialog):
         self.prominence_spin.setToolTip("Minimum peak prominence in spectrum intensity units; 0 uses automatic detection")
         peak_form.addRow("Prominence", self.prominence_spin)
 
+        self.min_snr_spin = QDoubleSpinBox()
+        self.min_snr_spin.setRange(0.0, 1_000_000.0)
+        self.min_snr_spin.setDecimals(3)
+        self.min_snr_spin.setSingleStep(0.1)
+        self.min_snr_spin.setSpecialValueText("Disabled")
+        self.min_snr_spin.setValue(parent.peak_min_snr)
+        self.min_snr_spin.setToolTip("Minimum signal-to-noise ratio required for non-fallback peaks")
+        peak_form.addRow("Minimum SNR", self.min_snr_spin)
+
         self.distance_spin = QSpinBox()
         self.distance_spin.setRange(1, 10_000)
         self.distance_spin.setSuffix(" points")
@@ -322,6 +365,18 @@ class AnalysisSettingsDialog(QDialog):
 
         self.baseline_checkbox.toggled.connect(self.baseline_method_combo.setEnabled)
         self.baseline_method_combo.setEnabled(self.baseline_checkbox.isChecked())
+        self.spectrum_smoothing_checkbox.toggled.connect(
+            self.spectrum_smoothing_method_combo.setEnabled
+        )
+        self.spectrum_smoothing_checkbox.toggled.connect(
+            self.spectrum_smoothing_window_spin.setEnabled
+        )
+        self.spectrum_smoothing_method_combo.setEnabled(
+            self.spectrum_smoothing_checkbox.isChecked()
+        )
+        self.spectrum_smoothing_window_spin.setEnabled(
+            self.spectrum_smoothing_checkbox.isChecked()
+        )
         self.filter_type_combo.currentIndexChanged.connect(
             self._update_filter_params_visibility
         )
@@ -336,6 +391,10 @@ class AnalysisSettingsDialog(QDialog):
         if window_size % 2 == 0:
             self.filter_window_spin.setValue(min(51, window_size + 1))
 
+    def _ensure_odd_smoothing_window_size(self, window_size):
+        if window_size % 2 == 0:
+            self.spectrum_smoothing_window_spin.setValue(min(501, window_size + 1))
+
     def apply_settings(self):
         filter_type = self.filter_type_combo.currentData()
         filter_params = {}
@@ -348,10 +407,14 @@ class AnalysisSettingsDialog(QDialog):
             peak_threshold=self.threshold_spin.value(),
             peak_prominence=self.prominence_spin.value(),
             peak_distance=self.distance_spin.value(),
+            peak_min_snr=self.min_snr_spin.value(),
             filter_type=filter_type,
             filter_params=filter_params,
             sample_rate=self.sample_rate_spin.value(),
             normalize_area=self.normalize_area_checkbox.isChecked(),
+            spectrum_smoothing_enabled=self.spectrum_smoothing_checkbox.isChecked(),
+            spectrum_smoothing_method=self.spectrum_smoothing_method_combo.currentData(),
+            spectrum_smoothing_window=self.spectrum_smoothing_window_spin.value(),
             peak_frequency_tolerance=self.peak_tolerance_spin.value(),
             data_type=self.data_type_combo.currentData(),
         )

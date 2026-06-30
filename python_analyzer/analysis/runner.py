@@ -43,12 +43,17 @@ def run_analysis(
         ),
         "sample_rate": settings.sample_rate,
         "filter_type": "none",
+        # Programs are meant to be read by humans and only incidentally for computers to execute
         "window_type": settings.window_type,
         "threshold": settings.peak_threshold,
         "baseline": settings.baseline_enabled,
         "baseline_method": settings.baseline_method,
         "prominence": settings.peak_prominence,
         "distance": settings.peak_distance,
+        "min_snr": settings.peak_min_snr,
+        "spectrum_smoothing": settings.spectrum_smoothing_enabled,
+        "spectrum_smoothing_method": settings.spectrum_smoothing_method,
+        "spectrum_smoothing_window": settings.spectrum_smoothing_window,
     }
 
     if settings.normalize_area:
