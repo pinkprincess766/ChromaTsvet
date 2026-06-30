@@ -19,7 +19,14 @@ Each analyzed and reference spectrum should expose:
 
 Reference records also need the analysis settings used to generate those
 features, especially `sample_rate_hz`, baseline mode, normalization mode, and
-peak-detection parameters.
+peak-detection parameters. Optional spectrum smoothing, prominence, distance,
+and minimum SNR settings are part of the peak-list definition and should match
+when comparing reference and unknown spectra.
+
+The detector keeps the strongest peak as a compatibility fallback even when a
+strict SNR threshold removes other candidates. That prevents empty peak lists
+from a single aggressive setting while still allowing SNR to suppress weaker
+noise peaks.
 
 ## Current Matching Model
 
