@@ -31,7 +31,11 @@ fn get_version() -> &'static str {
     baseline_method = "improved",
     prominence = 0.0,
     distance = 0,
-    normalize = false
+    normalize = false,
+    spectrum_smoothing = false,
+    spectrum_smoothing_method = "savgol",
+    spectrum_smoothing_window = 7,
+    min_snr = 0.0
 ))]
 fn process_signal<'py>(
     py: Python<'py>,
@@ -45,6 +49,10 @@ fn process_signal<'py>(
     prominence: f64,
     distance: usize,
     normalize: bool,
+    spectrum_smoothing: bool,
+    spectrum_smoothing_method: &str,
+    spectrum_smoothing_window: usize,
+    min_snr: f64,
 ) -> PyResult<Bound<'py, PyDict>> {
     // Sanitize once at the Python boundary so every filter choice reaches FFT safely.
     let mut signal = signal::filters::sanitize_signal(&ndarray::Array1::from_vec(data));
@@ -81,25 +89,43 @@ fn process_signal<'py>(
         spectrum.to_owned()
     };
 
-    // Area normalization is applied after baseline correction, but before peak
-    // detection. It makes spectra with different intensity scales easier to
-    // compare; downstream identification uses cosine similarity, which is
-    // scale-invariant.
+    // Spectrum smoothing is deliberately placed after baseline correction and
+    // before normalization, so peak detection sees a finite, comparable curve
+    // without hiding the original acquisition filter semantics.
+    let (smoothed_spectrum, smoothing_applied, smoothing_method, smoothing_window) =
+        if spectrum_smoothing {
+            signal::filters::smooth_spectrum(
+                &corrected_spectrum,
+                spectrum_smoothing_method,
+                spectrum_smoothing_window,
+            )
+        } else {
+            (corrected_spectrum.to_owned(), false, "none", 0)
+        };
+
+    // Area normalization is applied after baseline correction/spectrum
+    // smoothing, but before peak detection. It makes spectra with different
+    // intensity scales easier to compare; downstream identification can then
+    // focus on shape and peak features.
     let (analysis_spectrum, normalization_area) = if normalize {
-        signal::normalization::normalize_area(&corrected_spectrum)
+        signal::normalization::normalize_area(&smoothed_spectrum)
     } else {
-        (corrected_spectrum.to_owned(), 0.0)
+        (smoothed_spectrum.to_owned(), 0.0)
     };
     let normalized = normalize && normalization_area > 0.0;
 
     // 5. Frequency axis and peak picking
     let frequency_axis =
         signal::fft::compute_frequency_axis(analysis_spectrum.len(), signal_len, sample_rate);
-    let mut peaks = signal::peak_detection::detect_peaks_with_settings(
+    // Computer programming is an art, because it applies accumulated knowledge to the world, because it requires skill and ingenuity, and especially because it produces objects of beauty
+    let mut peaks = signal::peak_detection::detect_peaks_with_criteria(
         &analysis_spectrum,
-        threshold,
-        prominence,
-        distance,
+        signal::peak_detection::PeakDetectionSettings::new(
+            threshold,
+            prominence,
+            distance,
+            min_snr,
+        ),
     );
     let bin_width = if signal_len > 0 {
         sample_rate / signal_len as f64
@@ -128,6 +154,10 @@ fn process_signal<'py>(
     let _ = dict.set_item("peak_threshold", threshold);
     let _ = dict.set_item("peak_prominence", prominence);
     let _ = dict.set_item("peak_distance", distance);
+    let _ = dict.set_item("peak_min_snr", min_snr);
+    let _ = dict.set_item("spectrum_smoothed", smoothing_applied);
+    let _ = dict.set_item("spectrum_smoothing_method", smoothing_method);
+    let _ = dict.set_item("spectrum_smoothing_window", smoothing_window);
     let _ = dict.set_item("normalized", normalized);
     let _ = dict.set_item("normalization", if normalized { "area" } else { "none" });
     let _ = dict.set_item("normalization_area", normalization_area);

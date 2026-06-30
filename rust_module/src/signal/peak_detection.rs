@@ -4,10 +4,35 @@ use ndarray::prelude::*;
 const GAUSSIAN_AREA_FACTOR: f64 = 1.0645;
 const FALLBACK_HALF_WINDOW: usize = 3;
 
+#[derive(Debug, Clone, Copy)]
+pub struct PeakDetectionSettings {
+    pub threshold_factor: f64,
+    pub min_prominence: f64,
+    pub min_distance: usize,
+    pub min_snr: f64,
+}
+
+impl PeakDetectionSettings {
+    pub fn new(
+        threshold_factor: f64,
+        min_prominence: f64,
+        min_distance: usize,
+        min_snr: f64,
+    ) -> Self {
+        Self {
+            threshold_factor,
+            min_prominence,
+            min_distance,
+            min_snr,
+        }
+    }
+}
+
 struct PeakCandidate {
     index: usize,
     intensity: f64,
     prominence: f64,
+    snr: f64,
     is_global_max: bool,
 }
 
@@ -20,6 +45,21 @@ pub fn detect_peaks_with_settings(
     threshold_factor: f64,
     requested_prominence: f64,
     requested_distance: usize,
+) -> Vec<Peak> {
+    detect_peaks_with_criteria(
+        signal,
+        PeakDetectionSettings::new(
+            threshold_factor,
+            requested_prominence,
+            requested_distance,
+            0.0,
+        ),
+    )
+}
+
+pub fn detect_peaks_with_criteria(
+    signal: &Array1<f64>,
+    settings: PeakDetectionSettings,
 ) -> Vec<Peak> {
     if signal.len() < 3 {
         return vec![];
@@ -58,13 +98,18 @@ pub fn detect_peaks_with_settings(
 
     let mean = finite_values.iter().sum::<f64>() / finite_values.len() as f64;
     let noise = estimate_noise(&finite_values, mean);
-    let threshold_factor = if threshold_factor.is_finite() {
-        threshold_factor.max(0.0)
+    let threshold_factor = if settings.threshold_factor.is_finite() {
+        settings.threshold_factor.max(0.0)
     } else {
         0.0
     };
-    let requested_prominence = if requested_prominence.is_finite() {
-        requested_prominence.max(0.0)
+    let requested_prominence = if settings.min_prominence.is_finite() {
+        settings.min_prominence.max(0.0)
+    } else {
+        0.0
+    };
+    let min_snr = if settings.min_snr.is_finite() {
+        settings.min_snr.max(0.0)
     } else {
         0.0
     };
@@ -76,10 +121,10 @@ pub fn detect_peaks_with_settings(
     } else {
         noise * threshold_factor
     };
-    let min_distance = if requested_distance == 0 {
+    let min_distance = if settings.min_distance == 0 {
         (signal.len() / 500).max(1)
     } else {
-        requested_distance
+        settings.min_distance
     };
 
     let mut candidates = Vec::new();
@@ -97,11 +142,13 @@ pub fn detect_peaks_with_settings(
         }
 
         let prominence = estimate_prominence(signal, i);
-        if prominence >= min_prominence {
+        let snr = prominence / noise;
+        if prominence >= min_prominence && (min_snr <= 0.0 || snr >= min_snr) {
             candidates.push(PeakCandidate {
                 index: i,
                 intensity: current,
                 prominence,
+                snr,
                 is_global_max: i == global_idx,
             });
         }
@@ -112,6 +159,7 @@ pub fn detect_peaks_with_settings(
             index: global_idx,
             intensity: global_value,
             prominence: estimate_prominence(signal, global_idx).max(dynamic_range),
+            snr: estimate_prominence(signal, global_idx).max(dynamic_range) / noise,
             is_global_max: true,
         });
     }
@@ -119,6 +167,7 @@ pub fn detect_peaks_with_settings(
     candidates.sort_by(|a, b| {
         b.is_global_max
             .cmp(&a.is_global_max)
+            .then_with(|| b.prominence.total_cmp(&a.prominence))
             .then_with(|| b.intensity.total_cmp(&a.intensity))
     });
 
@@ -138,6 +187,7 @@ pub fn detect_peaks_with_settings(
             index: global_idx,
             intensity: global_value,
             prominence: estimate_prominence(signal, global_idx).max(dynamic_range),
+            snr: estimate_prominence(signal, global_idx).max(dynamic_range) / noise,
             is_global_max: true,
         });
     }
@@ -145,7 +195,7 @@ pub fn detect_peaks_with_settings(
     selected.sort_by_key(|peak| peak.index);
     selected
         .into_iter()
-        .map(|candidate| build_peak(signal, candidate, noise))
+        .map(|candidate| build_peak(signal, candidate))
         .collect()
 }
 
@@ -208,7 +258,7 @@ fn scan_min_until_higher(
     min_value
 }
 
-fn build_peak(signal: &Array1<f64>, candidate: PeakCandidate, noise: f64) -> Peak {
+fn build_peak(signal: &Array1<f64>, candidate: PeakCandidate) -> Peak {
     let baseline_level = candidate.intensity - candidate.prominence;
     let peak_height = candidate.intensity - baseline_level;
     let half_height = baseline_level + candidate.prominence * 0.5;
@@ -232,7 +282,7 @@ fn build_peak(signal: &Array1<f64>, candidate: PeakCandidate, noise: f64) -> Pea
         width,
         width_hz: 0.0,
         area,
-        snr: candidate.prominence / noise,
+        snr: candidate.snr,
     }
 }
 
@@ -441,6 +491,51 @@ mod tests {
         let peaks = detect_peaks_with_settings(&data, 100.0, 1.5, 1);
 
         assert_eq!(peaks.len(), 2);
+    }
+
+    #[test]
+    fn test_requested_snr_filters_noise_peaks() {
+        let data = array![0.0, 1.0, 0.0, 0.0, 0.8, 0.0, 0.0, 10.0, 0.0];
+
+        let peaks = detect_peaks_with_criteria(
+            &data,
+            PeakDetectionSettings::new(0.0, 0.0, 1, 1.0),
+        );
+
+        assert_eq!(peaks.len(), 1);
+        assert_eq!(peaks[0].position, 7.0);
+        assert!(peaks[0].snr >= 1.0);
+    }
+
+    #[test]
+    fn test_global_maximum_survives_strict_snr_filter() {
+        let data = array![0.0, 1.0, 0.0, 0.0, 0.8, 0.0];
+
+        let peaks = detect_peaks_with_criteria(
+            &data,
+            PeakDetectionSettings::new(0.0, 0.0, 1, 1_000.0),
+        );
+
+        assert_eq!(peaks.len(), 1);
+        assert_eq!(peaks[0].position, 1.0);
+    }
+
+    #[test]
+    fn test_non_finite_detection_settings_are_sanitized() {
+        let data = array![0.0, 2.0, 0.0, 0.0, 5.0, 0.0];
+
+        let peaks = detect_peaks_with_criteria(
+            &data,
+            PeakDetectionSettings::new(f64::NAN, f64::NEG_INFINITY, 0, f64::INFINITY),
+        );
+
+        assert!(peaks.iter().any(|peak| peak.position == 4.0));
+        assert!(peaks.iter().all(|peak| {
+            peak.intensity.is_finite()
+                && peak.width.is_finite()
+                && peak.area.is_finite()
+                && peak.snr.is_finite()
+        }));
     }
 
     #[test]
