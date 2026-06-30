@@ -66,8 +66,12 @@ DEFAULT_WINDOW_TYPE = "hann"
 DEFAULT_PEAK_THRESHOLD = 0.05
 DEFAULT_PEAK_PROMINENCE = 0.0
 DEFAULT_PEAK_DISTANCE = 1
+DEFAULT_PEAK_MIN_SNR = 0.0
 DEFAULT_FILTER_TYPE = "median"
 DEFAULT_NORMALIZE_AREA = False
+DEFAULT_SPECTRUM_SMOOTHING_ENABLED = False
+DEFAULT_SPECTRUM_SMOOTHING_METHOD = "savgol"
+DEFAULT_SPECTRUM_SMOOTHING_WINDOW = 7
 APP_LOGO_PATH = get_project_root() / "assets" / "chromatsvet_logo.png"
 DEBUG_TRACEBACK_ENV = "CHROMATSVET_DEBUG_TRACEBACKS"
 
@@ -206,10 +210,36 @@ class MainWindow(QMainWindow):
         self.peak_distance = saved_int(
             self.settings, "analysis/peak_distance", DEFAULT_PEAK_DISTANCE, 1, 10_000
         )
+        self.peak_min_snr = saved_float(
+            self.settings, "analysis/peak_min_snr", DEFAULT_PEAK_MIN_SNR, 0.0, 1_000_000.0
+        )
         self.filter_type, self.filter_params = saved_filter_settings(self.settings)
         self.normalize_area = saved_bool(
             self.settings, "analysis/normalize_area", DEFAULT_NORMALIZE_AREA
         )
+        self.spectrum_smoothing_enabled = saved_bool(
+            self.settings,
+            "analysis/spectrum_smoothing_enabled",
+            DEFAULT_SPECTRUM_SMOOTHING_ENABLED,
+        )
+        self.spectrum_smoothing_method = (
+            self.settings.value(
+                "analysis/spectrum_smoothing_method",
+                DEFAULT_SPECTRUM_SMOOTHING_METHOD,
+            )
+            or DEFAULT_SPECTRUM_SMOOTHING_METHOD
+        )
+        if self.spectrum_smoothing_method not in ("savgol", "median"):
+            self.spectrum_smoothing_method = DEFAULT_SPECTRUM_SMOOTHING_METHOD
+        self.spectrum_smoothing_window = saved_int(
+            self.settings,
+            "analysis/spectrum_smoothing_window",
+            DEFAULT_SPECTRUM_SMOOTHING_WINDOW,
+            3,
+            501,
+        )
+        if self.spectrum_smoothing_window % 2 == 0:
+            self.spectrum_smoothing_window += 1
         self.peak_frequency_tolerance = saved_float(
             self.settings, "analysis/peak_frequency_tolerance", 5.0, 0.1, 1000.0
         )
@@ -394,10 +424,14 @@ class MainWindow(QMainWindow):
         peak_threshold,
         peak_prominence,
         peak_distance,
+        peak_min_snr=DEFAULT_PEAK_MIN_SNR,
         filter_type=DEFAULT_FILTER_TYPE,
         filter_params=None,
         sample_rate=DEFAULT_SAMPLE_RATE,
         normalize_area=DEFAULT_NORMALIZE_AREA,
+        spectrum_smoothing_enabled=DEFAULT_SPECTRUM_SMOOTHING_ENABLED,
+        spectrum_smoothing_method=DEFAULT_SPECTRUM_SMOOTHING_METHOD,
+        spectrum_smoothing_window=DEFAULT_SPECTRUM_SMOOTHING_WINDOW,
         peak_frequency_tolerance=5.0,
         data_type="generic",
     ):
@@ -416,10 +450,23 @@ class MainWindow(QMainWindow):
                 0.0, min(1_000_000.0, float(peak_prominence))
             )
             normalized_peak_distance = max(1, min(10_000, int(peak_distance)))
+            normalized_peak_min_snr = max(0.0, min(1_000_000.0, float(peak_min_snr)))
             normalized_sample_rate = max(
                 0.001, min(10_000_000.0, float(sample_rate))
             )
             normalized_area_enabled = bool(normalize_area)
+            normalized_smoothing_enabled = bool(spectrum_smoothing_enabled)
+            normalized_smoothing_method = (
+                spectrum_smoothing_method
+                if spectrum_smoothing_method in ("savgol", "median")
+                else DEFAULT_SPECTRUM_SMOOTHING_METHOD
+            )
+            normalized_smoothing_window = max(
+                3,
+                min(501, int(spectrum_smoothing_window)),
+            )
+            if normalized_smoothing_window % 2 == 0:
+                normalized_smoothing_window = min(501, normalized_smoothing_window + 1)
             normalized_tolerance = max(
                 0.1,
                 min(1_000_000.0, float(peak_frequency_tolerance)),
@@ -439,10 +486,14 @@ class MainWindow(QMainWindow):
         self.peak_threshold = normalized_peak_threshold
         self.peak_prominence = normalized_peak_prominence
         self.peak_distance = normalized_peak_distance
+        self.peak_min_snr = normalized_peak_min_snr
         self.sample_rate = normalized_sample_rate
         self.filter_type = normalized_filter_type
         self.filter_params = normalized_filter_params
         self.normalize_area = normalized_area_enabled
+        self.spectrum_smoothing_enabled = normalized_smoothing_enabled
+        self.spectrum_smoothing_method = normalized_smoothing_method
+        self.spectrum_smoothing_window = normalized_smoothing_window
         self.peak_frequency_tolerance = normalized_tolerance
         self.data_type = normalized_data_type
 
@@ -454,8 +505,21 @@ class MainWindow(QMainWindow):
         self.settings.setValue("analysis/peak_threshold", self.peak_threshold)
         self.settings.setValue("analysis/peak_prominence", self.peak_prominence)
         self.settings.setValue("analysis/peak_distance", self.peak_distance)
+        self.settings.setValue("analysis/peak_min_snr", self.peak_min_snr)
         self.settings.setValue("analysis/filter_type", self.filter_type)
         self.settings.setValue("analysis/normalize_area", self.normalize_area)
+        self.settings.setValue(
+            "analysis/spectrum_smoothing_enabled",
+            self.spectrum_smoothing_enabled,
+        )
+        self.settings.setValue(
+            "analysis/spectrum_smoothing_method",
+            self.spectrum_smoothing_method,
+        )
+        self.settings.setValue(
+            "analysis/spectrum_smoothing_window",
+            self.spectrum_smoothing_window,
+        )
         self.settings.setValue(
             "analysis/filter_params",
             json.dumps(self.filter_params, sort_keys=True, separators=(",", ":")),
@@ -474,12 +538,19 @@ class MainWindow(QMainWindow):
             )
 
         baseline_description = self.baseline_method if self.baseline_enabled else "disabled"
+        smoothing_description = (
+            f"{self.spectrum_smoothing_method}/{self.spectrum_smoothing_window}"
+            if self.spectrum_smoothing_enabled
+            else "disabled"
+        )
         self.log(
             "Analysis settings applied: "
             f"baseline={baseline_description}, threshold={self.peak_threshold:.3f}, "
-            f"prominence={self.peak_prominence:g}, distance={self.peak_distance}, "
+            f"prominence={self.peak_prominence:g}, min_snr={self.peak_min_snr:g}, "
+            f"distance={self.peak_distance}, "
             f"sample_rate={self.sample_rate:g} Hz, "
             f"filter={self.filter_type}, filter_params={self.filter_params}, "
+            f"smoothing={smoothing_description}, "
             f"normalization={'area' if self.normalize_area else 'disabled'}",
             status_message="Analysis settings applied",
         )
@@ -661,7 +732,23 @@ class MainWindow(QMainWindow):
             peak_prominence=self.peak_prominence,
             peak_distance=self.peak_distance,
             normalize_area=self.normalize_area,
+            peak_min_snr=getattr(self, "peak_min_snr", DEFAULT_PEAK_MIN_SNR),
             window_type=DEFAULT_WINDOW_TYPE,
+            spectrum_smoothing_enabled=getattr(
+                self,
+                "spectrum_smoothing_enabled",
+                DEFAULT_SPECTRUM_SMOOTHING_ENABLED,
+            ),
+            spectrum_smoothing_method=getattr(
+                self,
+                "spectrum_smoothing_method",
+                DEFAULT_SPECTRUM_SMOOTHING_METHOD,
+            ),
+            spectrum_smoothing_window=getattr(
+                self,
+                "spectrum_smoothing_window",
+                DEFAULT_SPECTRUM_SMOOTHING_WINDOW,
+            ),
             peak_frequency_tolerance=getattr(self, "peak_frequency_tolerance", 5.0),
             data_type=getattr(self, "data_type", "generic"),
         )
@@ -675,6 +762,7 @@ class MainWindow(QMainWindow):
         if value is None:
             return ""
         try:
+            # Premature optimization is the root of all evil.
             numeric_value = float(value)
         except (TypeError, ValueError):
             return str(value)
@@ -1123,17 +1211,24 @@ class MainWindow(QMainWindow):
             normalization_description = (
                 "area" if self.current_result.get("normalized") else "disabled"
             )
+            smoothing_description = (
+                f"{self.spectrum_smoothing_method}/{self.spectrum_smoothing_window}"
+                if self.spectrum_smoothing_enabled
+                else "disabled"
+            )
             parameter_rows = [
                 ("Sample rate", f"{self.sample_rate:g} Hz"),
                 ("FFT window", DEFAULT_WINDOW_TYPE),
                 ("Signal filter", self.filter_type),
                 ("Filter params", self.filter_params),
                 ("Baseline", baseline_description),
+                ("Spectrum smoothing", smoothing_description),
                 ("Normalization", normalization_description),
                 ("Data type", self.data_type),
                 ("Peak tolerance", f"{self.peak_frequency_tolerance:g} Hz"),
                 ("Threshold", f"{self.peak_threshold:.3f}"),
                 ("Prominence", "automatic" if self.peak_prominence == 0 else f"{self.peak_prominence:g}"),
+                ("Minimum SNR", "disabled" if self.peak_min_snr == 0 else f"{self.peak_min_snr:g}"),
                 ("Distance", f"{self.peak_distance} points"),
             ]
             for label, value in parameter_rows:
@@ -1312,6 +1407,19 @@ class MainWindow(QMainWindow):
                     "normalization",
                     "area" if self.normalize_area else "none",
                 ),
+                "spectrum_smoothing": self.current_result.get(
+                    "spectrum_smoothed",
+                    self.spectrum_smoothing_enabled,
+                ),
+                "spectrum_smoothing_method": self.current_result.get(
+                    "spectrum_smoothing_method",
+                    self.spectrum_smoothing_method if self.spectrum_smoothing_enabled else "none",
+                ),
+                "spectrum_smoothing_window": self.current_result.get(
+                    "spectrum_smoothing_window",
+                    self.spectrum_smoothing_window if self.spectrum_smoothing_enabled else 0,
+                ),
+                "peak_min_snr": self.peak_min_snr,
                 "data_type": self.data_type,
                 "peak_frequency_tolerance_hz": self.peak_frequency_tolerance,
             }

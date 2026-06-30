@@ -39,10 +39,10 @@ after v0.1.
 ## Highlights
 
 - Load numeric spectral or chromatographic data from CSV and TXT files.
-- Apply median or Savitzky-Golay filtering and baseline correction.
+- Apply median or Savitzky-Golay signal filtering, optional spectrum smoothing, and baseline correction.
 - Calculate an FFT spectrum using a configurable sample rate and frequency axis.
 - Normalize a spectrum by integral area when comparable intensity scaling is needed.
-- Detect peaks and calculate frequency, intensity, FWHM width in bins/Hz, Gaussian area, and SNR.
+- Detect peaks with threshold, prominence, distance, and SNR controls; calculate frequency, intensity, FWHM width in bins/Hz, Gaussian area, and SNR.
 - Inspect detected peaks in the plot and in a detailed analysis table.
 - Zoom into the spectrum with the mouse.
 - Compare spectra against a local SQLite reference library.
@@ -134,7 +134,7 @@ sample rate is required to convert FFT bins into physical frequency values.
 ## Typical Workflow
 
 1. Open a CSV or TXT signal file.
-2. Configure sample rate, filtering, baseline correction, and peak-detection parameters.
+2. Configure sample rate, filtering, spectrum smoothing, baseline correction, and peak-detection parameters.
 3. Run the analysis and inspect marked peaks on the frequency plot.
 4. Review peak frequency, intensity, width in bins/Hz, area, and SNR in the results table.
 5. Export the peak list as CSV or generate a PDF analysis report.

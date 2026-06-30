@@ -4,12 +4,17 @@
 use medians::Medianf64;
 use ndarray::prelude::*;
 
+pub const DEFAULT_SPECTRUM_SMOOTHING_METHOD: &str = "savgol";
+pub const DEFAULT_SPECTRUM_SMOOTHING_WINDOW: usize = 7;
+const SPECTRUM_SAVGOL_POLY_ORDER: usize = 3;
+
 /// Replaces non-finite samples so downstream FFT and filter code stays finite.
 pub(crate) fn sanitize_signal(signal: &Array1<f64>) -> Array1<f64> {
     let mut cleaned = signal.to_owned();
     let mut previous_finite = None;
 
     for value in cleaned.iter_mut() {
+        // Beware of bugs in the above code; I have only proved it correct, not tried it.
         if value.is_finite() {
             previous_finite = Some(*value);
         } else if let Some(previous) = previous_finite {
@@ -185,6 +190,48 @@ fn median_smooth(signal: &Array1<f64>, window_size: usize) -> Array1<f64> {
     }
 
     result
+}
+
+/// Smooth a processed spectrum before normalization and peak detection.
+pub fn smooth_spectrum(
+    signal: &Array1<f64>,
+    method: &str,
+    window_size: usize,
+) -> (Array1<f64>, bool, &'static str, usize) {
+    let cleaned = sanitize_signal(signal);
+    let n = cleaned.len();
+    if n < 5 {
+        return (cleaned, false, "none", 0);
+    }
+
+    let method = method.trim().to_lowercase();
+    if method == "none" {
+        return (cleaned, false, "none", 0);
+    }
+
+    let normalized_window = normalized_window_size(
+        if window_size == 0 {
+            DEFAULT_SPECTRUM_SMOOTHING_WINDOW
+        } else {
+            window_size
+        },
+        n,
+    );
+
+    match method.as_str() {
+        DEFAULT_SPECTRUM_SMOOTHING_METHOD | "savitzky-golay" | "savitzky_golay" => {
+            let poly_order = SPECTRUM_SAVGOL_POLY_ORDER.min(normalized_window - 1);
+            let smoothed = savgol_filter(&cleaned, normalized_window, poly_order);
+            (smoothed, true, DEFAULT_SPECTRUM_SMOOTHING_METHOD, normalized_window)
+        }
+        "median" => (
+            median_filter(&cleaned, normalized_window),
+            true,
+            "median",
+            normalized_window,
+        ),
+        _ => (cleaned, false, "none", 0),
+    }
 }
 
 /// Smooths a signal by fitting a local polynomial in each window.
@@ -436,6 +483,58 @@ mod tests {
         assert_eq!(filtered.len(), data.len());
         assert!(filtered_error < input_error);
         assert!((filtered[10] - 10.0).abs() < (data[10] - 10.0).abs());
+    }
+
+    #[test]
+    fn test_spectrum_smoothing_reduces_alternating_noise() {
+        let data = Array1::from_iter((0..31).map(|i| 4.0 + if i % 2 == 0 { 0.4 } else { -0.4 }));
+
+        let (smoothed, applied, method, window) = smooth_spectrum(&data, "savgol", 9);
+        let input_error = data.iter().map(|value| (value - 4.0).powi(2)).sum::<f64>();
+        let smoothed_error = smoothed
+            .iter()
+            .map(|value| (value - 4.0).powi(2))
+            .sum::<f64>();
+
+        assert!(applied);
+        assert_eq!(method, DEFAULT_SPECTRUM_SMOOTHING_METHOD);
+        assert_eq!(window, 9);
+        assert_eq!(smoothed.len(), data.len());
+        assert!(smoothed.iter().all(|value| value.is_finite()));
+        assert!(smoothed_error < input_error);
+    }
+
+    #[test]
+    fn test_spectrum_smoothing_can_be_disabled_or_rejected() {
+        let data = array![0.0, f64::NAN, 2.0, 3.0, 4.0];
+
+        let (disabled, disabled_applied, disabled_method, disabled_window) =
+            smooth_spectrum(&data, "none", 7);
+        let (unknown, unknown_applied, unknown_method, unknown_window) =
+            smooth_spectrum(&data, "unknown", 7);
+
+        assert!(!disabled_applied);
+        assert_eq!(disabled_method, "none");
+        assert_eq!(disabled_window, 0);
+        assert!(disabled.iter().all(|value| value.is_finite()));
+        assert!(!unknown_applied);
+        assert_eq!(unknown_method, "none");
+        assert_eq!(unknown_window, 0);
+        assert!(unknown.iter().all(|value| value.is_finite()));
+    }
+
+    #[test]
+    fn test_median_spectrum_smoothing_suppresses_impulse() {
+        let data = array![1.0, 1.0, 1.0, 100.0, 1.0, 1.0, 1.0];
+
+        let (smoothed, applied, method, window) = smooth_spectrum(&data, "median", 5);
+
+        assert!(applied);
+        assert_eq!(method, "median");
+        assert_eq!(window, 5);
+        assert_eq!(smoothed.len(), data.len());
+        assert!(smoothed.iter().all(|value| value.is_finite()));
+        assert!((smoothed[3] - 1.0).abs() < 1e-12);
     }
 
     #[test]

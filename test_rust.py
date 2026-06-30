@@ -1,4 +1,5 @@
 import sys
+import math
 from pathlib import Path
 import unittest
 
@@ -31,6 +32,15 @@ TEST_SIGNAL = [
 ]
 
 
+def positive_trapezoidal_area(values):
+    positive_values = np.maximum(np.asarray(values, dtype=float), 0.0)
+    if positive_values.size == 0:
+        return 0.0
+    if positive_values.size == 1:
+        return float(positive_values[0])
+    return float(np.sum((positive_values[:-1] + positive_values[1:]) * 0.5))
+
+
 def run_rust_pipeline():
     return spectrometer_rust.process_signal(
         data=TEST_SIGNAL,
@@ -48,10 +58,14 @@ class RustModuleSmokeTest(unittest.TestCase):
         self.assertIn("spectrum", result)
         self.assertIn("frequency_axis", result)
         self.assertIn("peaks", result)
+        self.assertIn("spectrum_smoothed", result)
+        self.assertIn("peak_min_snr", result)
         self.assertGreater(len(result["spectrum"]), 0)
         self.assertEqual(len(result["frequency_axis"]), len(result["spectrum"]))
         self.assertTrue(np.all(np.isfinite(result["spectrum"])))
         self.assertTrue(np.all(np.isfinite(result["frequency_axis"])))
+        self.assertFalse(result["spectrum_smoothed"])
+        self.assertEqual(result["peak_min_snr"], 0.0)
 
         for peak in result["peaks"]:
             self.assertTrue(np.isfinite(peak.position))
@@ -78,6 +92,97 @@ class RustModuleSmokeTest(unittest.TestCase):
         bin_width = result["sample_rate"] / len(TEST_SIGNAL)
         for peak in result["peaks"]:
             self.assertAlmostEqual(peak.width_hz, peak.width * bin_width)
+
+    def test_spectrum_smoothing_metadata_is_returned(self):
+        result = spectrometer_rust.process_signal(
+            data=TEST_SIGNAL,
+            sample_rate=1000.0,
+            filter_type="none",
+            window_type="hann",
+            threshold=0.01,
+            spectrum_smoothing=True,
+            spectrum_smoothing_method="savgol",
+            spectrum_smoothing_window=8,
+            min_snr=1.5,
+        )
+
+        self.assertTrue(result["spectrum_smoothed"])
+        self.assertEqual(result["spectrum_smoothing_method"], "savgol")
+        self.assertEqual(result["spectrum_smoothing_window"], 7)
+        self.assertEqual(result["peak_min_snr"], 1.5)
+        self.assertEqual(len(result["frequency_axis"]), len(result["spectrum"]))
+
+    def test_smoothing_does_not_change_frequency_axis(self):
+        data = [
+            math.sin(2.0 * math.pi * 3.0 * sample / 32.0)
+            for sample in range(32)
+        ]
+
+        base = spectrometer_rust.process_signal(
+            data=data,
+            sample_rate=320.0,
+            filter_type="none",
+            window_type="rectangular",
+            threshold=0.01,
+            baseline=False,
+        )
+        smoothed = spectrometer_rust.process_signal(
+            data=data,
+            sample_rate=320.0,
+            filter_type="none",
+            window_type="rectangular",
+            threshold=0.01,
+            baseline=False,
+            spectrum_smoothing=True,
+            spectrum_smoothing_method="median",
+            spectrum_smoothing_window=5,
+        )
+
+        self.assertEqual(base["frequency_axis"], smoothed["frequency_axis"])
+        self.assertEqual(len(smoothed["frequency_axis"]), len(smoothed["spectrum"]))
+
+    def test_smoothing_and_normalization_return_unit_positive_area(self):
+        result = spectrometer_rust.process_signal(
+            data=TEST_SIGNAL,
+            sample_rate=1000.0,
+            filter_type="none",
+            window_type="hann",
+            threshold=0.01,
+            baseline=True,
+            normalize=True,
+            spectrum_smoothing=True,
+            spectrum_smoothing_method="savgol",
+            spectrum_smoothing_window=7,
+        )
+
+        self.assertTrue(result["normalized"])
+        self.assertTrue(result["spectrum_smoothed"])
+        self.assertAlmostEqual(positive_trapezoidal_area(result["spectrum"]), 1.0)
+        self.assertTrue(np.all(np.isfinite(result["spectrum"])))
+
+    def test_new_pipeline_options_sanitize_non_finite_inputs(self):
+        result = spectrometer_rust.process_signal(
+            data=[0.0, math.nan, 1.0, math.inf, -math.inf, 0.5, 0.0, 0.2],
+            sample_rate=math.nan,
+            filter_type="none",
+            window_type="hann",
+            threshold=math.nan,
+            baseline=True,
+            normalize=True,
+            spectrum_smoothing=True,
+            spectrum_smoothing_method="median",
+            spectrum_smoothing_window=4,
+            min_snr=math.nan,
+        )
+
+        self.assertEqual(result["sample_rate"], 1.0)
+        self.assertTrue(np.all(np.isfinite(result["spectrum"])))
+        self.assertTrue(np.all(np.isfinite(result["frequency_axis"])))
+        for peak in result["peaks"]:
+            self.assertTrue(np.isfinite(peak.frequency))
+            self.assertTrue(np.isfinite(peak.intensity))
+            self.assertTrue(np.isfinite(peak.area))
+            self.assertTrue(np.isfinite(peak.snr))
 
 
 def plot_smoke_result(result):
