@@ -40,6 +40,7 @@ from python_analyzer.readers import read_spectrum_file, SpectrumFileFormatError
 from python_analyzer.analysis.models import AnalysisSettings, LoadedSpectrum
 from python_analyzer.analysis.runner import run_analysis as run_analysis_pipeline
 from python_analyzer.exporters import (
+    PDFMatchRow,
     PDFReportData,
     PDFReportExporter,
     write_peaks_csv,
@@ -1203,11 +1204,11 @@ class MainWindow(QMainWindow):
             matches = []
             for row in range(self.table.rowCount()):
                 matches.append(
-                    (
-                        self.table.item(row, 0).text(),
-                        self.table.item(row, 1).text(),
-                        self.table.item(row, 2).text(),
-                        self.table.item(row, 3).text(),
+                    PDFMatchRow(
+                        substance_name=self.table.item(row, 0).text(),
+                        formula=self.table.item(row, 1).text(),
+                        score=self.table.item(row, 2).text(),
+                        compared_points=self.table.item(row, 3).text(),
                     )
                 )
 
