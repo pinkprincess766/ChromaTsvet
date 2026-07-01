@@ -938,7 +938,12 @@ class MainWindow(QMainWindow):
 
         try:
             spectrum = np.asarray(result.get("spectrum", []), dtype=float)
-            frequency_axis = self.spectrum_plot.frequency_axis(result, len(spectrum))
+            frequency_axis = self.spectrum_plot.frequency_axis(
+                result,
+                len(spectrum),
+                sample_rate=self.sample_rate,
+                source_signal_len=len(self.current_data),
+            )
             peaks = result.get("peaks", [])
             self.current_peaks = peaks  # store for adding references with peak data
 
