@@ -26,9 +26,6 @@ from PyQt5.QtCore import Qt, QSettings
 from PyQt5.QtGui import (QFont, QColor, QPalette, QFontDatabase, QPixmap,
                          QTextCharFormat, QTextCursor)
 import pyqtgraph as pg
-from reportlab.lib.pagesizes import A4
-from reportlab.pdfgen import canvas
-from PIL import Image
 
 from paths import ensure_rust_in_path, get_library_db_path, get_project_root
 
@@ -42,7 +39,11 @@ from python_analyzer.core.identification import (
 from python_analyzer.readers import read_spectrum_file, SpectrumFileFormatError
 from python_analyzer.analysis.models import AnalysisSettings, LoadedSpectrum
 from python_analyzer.analysis.runner import run_analysis as run_analysis_pipeline
-from python_analyzer.exporters import write_peaks_csv
+from python_analyzer.exporters import (
+    PDFReportData,
+    PDFReportExporter,
+    write_peaks_csv,
+)
 from python_analyzer.viz.spectrum_plot import SpectrumPlot
 from python_analyzer.gui.dialogs import SettingsDialog, LogWindow, AnalysisSettingsDialog
 from python_analyzer.gui.log_view import (
@@ -937,7 +938,12 @@ class MainWindow(QMainWindow):
 
         try:
             spectrum = np.asarray(result.get("spectrum", []), dtype=float)
-            frequency_axis = self.spectrum_plot.frequency_axis(result, len(spectrum))
+            frequency_axis = self.spectrum_plot.frequency_axis(
+                result,
+                len(spectrum),
+                sample_rate=self.sample_rate,
+                source_signal_len=len(self.current_data),
+            )
             peaks = result.get("peaks", [])
             self.current_peaks = peaks  # store for adding references with peak data
 
@@ -1155,56 +1161,18 @@ class MainWindow(QMainWindow):
             if not self.plot.grab().save(plot_path, "PNG"):
                 raise OSError("the spectrum plot could not be rendered")
 
-            c = canvas.Canvas(file, pagesize=A4)
-            width, height = A4
-            margin = 50
-            y = height - 55
-
-            if APP_LOGO_PATH.is_file():
-                c.drawImage(
-                    str(APP_LOGO_PATH),
-                    width - margin - 78,
-                    height - 72,
-                    width=78,
-                    height=58,
-                    preserveAspectRatio=True,
-                    mask='auto',
-                )
-
-            c.setFont("Helvetica-Bold", 18)
-            c.drawString(margin, y, "ChromaTsvet Analysis Report")
-            y -= 22
-
-            c.setFont("Helvetica", 9)
-            c.setFillColorRGB(0.35, 0.38, 0.43)
-            c.drawString(margin, y, "Spectral data and chromatogram analysis")
-            c.setFillColorRGB(0, 0, 0)
-            y -= 30
-
-            c.setFont("Helvetica-Bold", 12)
-            c.drawString(margin, y, "Summary")
-            y -= 18
-
-            c.setFont("Helvetica", 10)
+            source_file_name = self.display_source_name()
+            data_points_count = len(self.current_data) if self.current_data else 0
+            peaks = self.current_result["peaks"]
             summary_rows = [
                 ("Date", f"{datetime.now():%Y-%m-%d %H:%M}"),
                 ("App version", APP_VERSION),
                 ("Rust core", spectrometer_rust.get_version()),
-                ("Source file", self.display_source_name()),
-                ("Data points", str(len(self.current_data) if self.current_data else 0)),
-                ("Peaks found", str(len(self.current_result["peaks"]))),
+                ("Source file", source_file_name),
+                ("Data points", str(data_points_count)),
+                ("Peaks found", str(len(peaks))),
             ]
-            for label, value in summary_rows:
-                c.drawString(margin, y, f"{label}:")
-                c.drawString(margin + 95, y, str(value)[:78])
-                y -= 15
-            y -= 14
 
-            c.setFont("Helvetica-Bold", 12)
-            c.drawString(margin, y, "Analysis Parameters")
-            y -= 18
-
-            c.setFont("Helvetica", 10)
             baseline_description = (
                 self.baseline_method if self.baseline_enabled else "disabled"
             )
@@ -1231,105 +1199,36 @@ class MainWindow(QMainWindow):
                 ("Minimum SNR", "disabled" if self.peak_min_snr == 0 else f"{self.peak_min_snr:g}"),
                 ("Distance", f"{self.peak_distance} points"),
             ]
-            for label, value in parameter_rows:
-                c.drawString(margin, y, f"{label}:")
-                c.drawString(margin + 95, y, str(value)[:78])
-                y -= 15
-            y -= 12
 
-            if y < 340:
-                c.showPage()
-                y = height - margin
-
-            c.setFont("Helvetica-Bold", 12)
-            c.drawString(margin, y, "Spectrum")
-            y -= 218
-            c.drawImage(plot_path, margin, y, width=width - margin * 2, height=200, preserveAspectRatio=True, anchor='c')
-            y -= 25
-
-            c.setFont("Helvetica-Bold", 12)
-            c.drawString(margin, y, "Detected Peaks")
-            y -= 20
-
-            peak_columns = [
-                ("Freq Hz", 0),
-                ("Bin", 75),
-                ("Intensity", 118),
-                ("Width bin", 178),
-                ("Width Hz", 245),
-                ("Area", 312),
-                ("SNR", 390),
-            ]
-
-            def draw_peak_header(current_y):
-                c.setFont("Helvetica-Bold", 9)
-                for label, offset in peak_columns:
-                    c.drawString(margin + offset, current_y, label)
-                current_y -= 13
-                c.line(margin, current_y, width - margin, current_y)
-                return current_y - 12
-
-            y = draw_peak_header(y)
-
-            c.setFont("Helvetica", 9)
-            peaks = self.current_result["peaks"]
-            if peaks:
-                for peak in peaks:
-                    if y < 90:
-                        c.showPage()
-                        y = draw_peak_header(height - margin)
-                        c.setFont("Helvetica", 9)
-                    c.drawString(margin, y, self._format_peak_value(self._peak_frequency(peak)))
-                    c.drawString(margin + 75, y, self._format_peak_value(peak.position))
-                    c.drawString(margin + 118, y, self._format_peak_value(peak.intensity))
-                    c.drawString(margin + 178, y, self._format_peak_value(peak.width))
-                    c.drawString(
-                        margin + 245,
-                        y,
-                        self._format_peak_value(getattr(peak, "width_hz", None)),
-                    )
-                    c.drawString(margin + 312, y, self._format_peak_value(peak.area))
-                    c.drawString(margin + 390, y, self._format_peak_value(peak.snr))
-                    y -= 14
-            else:
-                c.drawString(margin, y, "No peaks detected.")
-                y -= 16
-
-            y -= 10
-            if y < 150:
-                c.showPage()
-                y = height - margin
-
-            c.setFont("Helvetica-Bold", 12)
-            c.drawString(margin, y, "Identification Results")
-            y -= 20
-
-            c.setFont("Helvetica-Bold", 9)
-            c.drawString(margin, y, "Substance")
-            c.drawString(margin + 170, y, "Formula")
-            c.drawString(margin + 270, y, "Score")
-            c.drawString(margin + 340, y, "Compared points")
-            y -= 13
-            c.line(margin, y, width - margin, y)
-            y -= 12
-
-            c.setFont("Helvetica", 9)
+            matches = []
             for row in range(self.table.rowCount()):
-                if y < 80:
-                    c.showPage()
-                    y = height - margin
-                    c.setFont("Helvetica", 9)
-                name = self.table.item(row, 0).text()
-                formula = self.table.item(row, 1).text()
-                score = self.table.item(row, 2).text()
-                compared_points = self.table.item(row, 3).text()
-                c.drawString(margin, y, name[:28])
-                c.drawString(margin + 170, y, formula[:14])
-                c.drawString(margin + 270, y, score)
-                c.drawString(margin + 340, y, compared_points)
-                y -= 14
+                matches.append(
+                    (
+                        self.table.item(row, 0).text(),
+                        self.table.item(row, 1).text(),
+                        self.table.item(row, 2).text(),
+                        self.table.item(row, 3).text(),
+                    )
+                )
 
-            c.save()
+            report_data = PDFReportData(
+                title="ChromaTsvet Analysis Report",
+                subtitle="Spectral data and chromatogram analysis",
+                summary_rows=summary_rows,
+                parameter_rows=parameter_rows,
+                peaks=peaks,
+                matches=matches,
+                source_file_name=source_file_name,
+                data_points_count=data_points_count,
+                peaks_count=len(peaks),
+            )
+            PDFReportExporter().export(
+                file,
+                report_data,
+                plot_image_path=plot_path,
+                logo_path=APP_LOGO_PATH,
+            )
+
             QMessageBox.information(self, "Success", f"PDF report saved:\n{file}")
             self.log(
                 f"PDF report created: {display_file_label(file)}",
