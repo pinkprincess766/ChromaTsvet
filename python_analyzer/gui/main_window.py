@@ -20,7 +20,7 @@ from PyQt5.QtWidgets import (
     QPushButton, QTableWidget, QTableWidgetItem, QLabel,
     QFileDialog, QHBoxLayout, QMessageBox, QInputDialog, QTextEdit,
     QHeaderView, QDialog, QFormLayout, QComboBox, QDialogButtonBox, QSpinBox,
-    QCheckBox, QDoubleSpinBox, QGroupBox, QStatusBar, QTabWidget
+    QCheckBox, QDoubleSpinBox, QGroupBox, QStatusBar, QTabWidget, QAction
 )
 from PyQt5.QtCore import Qt, QSettings
 from PyQt5.QtGui import (QFont, QColor, QPalette, QFontDatabase, QPixmap,
@@ -50,6 +50,15 @@ from python_analyzer.gui.log_view import (
     LOG_LEVEL_LABELS,
     append_log_entry,
     log_level_from_entry,
+)
+from python_analyzer.gui.recent_files import (
+    clear_recent_files as clear_recent_file_history,
+    forget_recent_file,
+    load_last_directory,
+    load_recent_files,
+    remember_recent_file,
+    remember_last_directory,
+    suggested_dialog_path,
 )
 from python_analyzer.gui.theme import FONT_CANDIDATES, apply_app_theme
 
@@ -178,12 +187,15 @@ class MainWindow(QMainWindow):
         self.identifier = SpectrumIdentifier()
         self.current_data = None
         self.current_result = None
+        self.current_peaks = []
         self.current_file_name = None
         self.current_file_path = None
         self.current_spectrum: LoadedSpectrum | None = None
+        self.analysis_status = "idle"
         self.log_history = []
         self.log_window = None
         self.settings = app_settings()
+        self.recent_files = load_recent_files(self.settings)
         self.theme = saved_theme(self.settings)
         self.font_family = saved_font_family(self.settings)
         self.font_size = saved_font_size(self.settings)
@@ -293,6 +305,8 @@ class MainWindow(QMainWindow):
         self.btn_log.clicked.connect(self.open_log)
         self.btn_settings.clicked.connect(self.open_settings)
 
+        self._create_menus()
+
         btn_layout.addWidget(self.btn_open)
         self.file_label = QLabel()
         self.file_label.setObjectName("fileLabel")
@@ -387,7 +401,10 @@ class MainWindow(QMainWindow):
         self.status_bar.setSizeGripEnabled(False)
         self.status_source_label = QLabel("No file loaded")
         self.status_source_label.setObjectName("statusSourceLabel")
+        self.status_details_label = QLabel("No data | idle")
+        self.status_details_label.setObjectName("statusDetailsLabel")
         self.status_bar.addPermanentWidget(self.status_source_label)
+        self.status_bar.addPermanentWidget(self.status_details_label)
         self.setStatusBar(self.status_bar)
 
         self._update_file_display()
@@ -395,6 +412,18 @@ class MainWindow(QMainWindow):
 
         self.log("Application started", status_message="Ready")
         self.status_bar.showMessage("Ready")
+
+    def _create_menus(self):
+        file_menu = self.menuBar().addMenu("&File")
+
+        self.open_file_action = QAction("Open Spectrum...", self)
+        self.open_file_action.setStatusTip("Open a CSV or TXT spectrum file")
+        self.open_file_action.triggered.connect(self.load_file)
+        file_menu.addAction(self.open_file_action)
+
+        self.recent_files_menu = file_menu.addMenu("Recent Files")
+        self.recent_files_menu.aboutToShow.connect(self._refresh_recent_files_menu)
+        self._refresh_recent_files_menu()
 
     def open_settings(self):
         SettingsDialog(self).exec()
@@ -408,6 +437,59 @@ class MainWindow(QMainWindow):
         self.log_window.show()
         self.log_window.raise_()
         self.log_window.activateWindow()
+
+    def _refresh_recent_files_menu(self):
+        self.recent_files_menu.clear()
+        if not self.recent_files:
+            empty_action = QAction("No recent files", self)
+            empty_action.setEnabled(False)
+            self.recent_files_menu.addAction(empty_action)
+            return
+
+        for index, file_path in enumerate(self.recent_files, start=1):
+            action = QAction(self._recent_file_action_text(index, file_path), self)
+            action.setData(file_path)
+            action.setToolTip(file_path)
+            action.triggered.connect(
+                lambda checked=False, path=file_path: self.open_recent_file(path)
+            )
+            self.recent_files_menu.addAction(action)
+
+        self.recent_files_menu.addSeparator()
+        clear_action = QAction("Clear Recent Files", self)
+        clear_action.triggered.connect(self.clear_recent_files)
+        self.recent_files_menu.addAction(clear_action)
+
+    def _recent_file_action_text(self, index, file_path):
+        path = Path(file_path)
+        parent_name = path.parent.name
+        location_hint = f" ({parent_name})" if parent_name else ""
+        return f"{index}. {path.name}{location_hint}"
+
+    def clear_recent_files(self):
+        clear_recent_file_history(self.settings)
+        self.recent_files = []
+        self._refresh_recent_files_menu()
+        self.log(
+            "Recent file history cleared",
+            status_message="Recent file history cleared",
+        )
+
+    def open_recent_file(self, file_path):
+        path = Path(file_path)
+        if not path.is_file():
+            self.recent_files = forget_recent_file(self.settings, path)
+            self._refresh_recent_files_menu()
+            file_label = display_file_label(path)
+            self._show_warning(
+                "Recent file unavailable",
+                f"'{file_label}' could not be found and was removed from Recent Files.",
+                log_message=f"Recent file unavailable: {file_label}",
+                status_message="Recent file unavailable",
+            )
+            return
+
+        self._load_spectrum_file(path)
 
     def closeEvent(self, event):
         close_identifier = getattr(getattr(self, "identifier", None), "close", None)
@@ -555,6 +637,7 @@ class MainWindow(QMainWindow):
             f"normalization={'area' if self.normalize_area else 'disabled'}",
             status_message="Analysis settings applied",
         )
+        self._update_status_summary()
         if self.current_data is not None:
             self.run_analysis()
 
@@ -702,6 +785,7 @@ class MainWindow(QMainWindow):
             self.status_source_label.setText(self.current_file_name)
             self.status_source_label.setToolTip(self.current_file_path or self.current_file_name)
             self.setWindowTitle(f"{WINDOW_TITLE} — {self.current_file_name}")
+            self._update_status_summary()
             return
 
         self.file_label.setText("File not loaded")
@@ -709,6 +793,50 @@ class MainWindow(QMainWindow):
         self.status_source_label.setText("No file loaded")
         self.status_source_label.setToolTip("Open a CSV or TXT spectrum file")
         self.setWindowTitle(WINDOW_TITLE)
+        self._update_status_summary()
+
+    def _update_status_summary(self):
+        point_count = len(self.current_data) if self.current_data is not None else 0
+        peaks = (
+            self.current_result.get("peaks", [])
+            if self.current_result is not None
+            else []
+        )
+        peak_count = len(peaks)
+
+        if self.current_data is None:
+            status_text = "No data | idle"
+        elif self.current_result is not None:
+            status_text = (
+                f"{point_count} points | {peak_count} peaks | analyzed | "
+                f"threshold={self.peak_threshold:.3f}"
+            )
+        else:
+            status_text = f"{point_count} points | {self.analysis_status}"
+
+        self.status_details_label.setText(status_text)
+        self.status_details_label.setToolTip(self._analysis_settings_tooltip())
+
+    def _analysis_settings_tooltip(self):
+        baseline_description = (
+            self.baseline_method if self.baseline_enabled else "disabled"
+        )
+        smoothing_description = (
+            f"{self.spectrum_smoothing_method}/{self.spectrum_smoothing_window}"
+            if self.spectrum_smoothing_enabled
+            else "disabled"
+        )
+        filter_window = self.filter_params.get("window_size")
+        filter_description = (
+            f"{self.filter_type}/{filter_window}"
+            if filter_window is not None
+            else self.filter_type
+        )
+        return (
+            f"filter={filter_description}, threshold={self.peak_threshold:.3f}, "
+            f"baseline={baseline_description}, smoothing={smoothing_description}, "
+            f"sample_rate={self.sample_rate:g} Hz"
+        )
 
     def _update_export_actions(self):
         peaks = (
@@ -815,11 +943,18 @@ class MainWindow(QMainWindow):
                 self.table.setItem(row, column, self._readonly_table_item(value))
 
     def load_file(self):
-        file, _ = QFileDialog.getOpenFileName(self, "Open spectrum", "", "CSV (*.csv);;TXT (*.txt)")
+        file, _ = QFileDialog.getOpenFileName(
+            self,
+            "Open spectrum",
+            load_last_directory(self.settings),
+            "CSV (*.csv);;TXT (*.txt)",
+        )
         if not file:
             return
 
-        file_path = Path(file)
+        self._load_spectrum_file(Path(file))
+
+    def _load_spectrum_file(self, file_path):
         file_label = display_file_label(file_path)
         try:
             if file_path.stat().st_size == 0:
@@ -831,7 +966,7 @@ class MainWindow(QMainWindow):
                 )
                 return
 
-            data, skipped_rows = read_spectrum_file(file)
+            data, skipped_rows = read_spectrum_file(file_path)
         except SpectrumFileFormatError as exc:
             self._show_warning(
                 "Unsupported spectrum format",
@@ -889,12 +1024,17 @@ class MainWindow(QMainWindow):
         self.current_data = data
         self.current_file_name = file_path.name
         self.current_file_path = str(file_path.resolve())
+        self.current_result = None
+        self.current_peaks = []
+        self.analysis_status = "loaded"
 
         self.current_spectrum = LoadedSpectrum(
             data=data,
             file_path=self.current_file_path,
             file_name=self.current_file_name,
         )
+        self.recent_files = remember_recent_file(self.settings, file_path)
+        self._refresh_recent_files_menu()
         self._update_file_display()
         self.log(
             f"Loaded file: {self.current_file_name} ({len(data)} points)",
@@ -907,6 +1047,9 @@ class MainWindow(QMainWindow):
             return
 
         self.current_result = None
+        self.current_peaks = []
+        self.analysis_status = "analyzing"
+        self._update_status_summary()
         self._set_peak_table([])
         self._set_match_table([])
         self._update_result_tab_titles(0, 0)
@@ -919,6 +1062,8 @@ class MainWindow(QMainWindow):
                 self.analysis_settings,
             )
         except filters.FilterError as exc:
+            self.analysis_status = "analysis failed"
+            self._update_status_summary()
             self._show_error(
                 "Signal filtering error",
                 "The selected signal filter could not be applied. The analysis was not run.",
@@ -927,6 +1072,8 @@ class MainWindow(QMainWindow):
             )
             return
         except Exception as exc:
+            self.analysis_status = "analysis failed"
+            self._update_status_summary()
             self._show_error(
                 "Analysis error",
                 "The spectrum analysis could not be completed. The application can continue to be used.",
@@ -989,6 +1136,8 @@ class MainWindow(QMainWindow):
             self._set_match_table(matches)
             self._update_result_tab_titles(len(peaks), len(matches))
         except Exception as exc:
+            self.analysis_status = "analysis failed"
+            self._update_status_summary()
             self._show_error(
                 "Analysis error",
                 "The spectrum analysis could not be completed. The application can continue to be used.",
@@ -999,7 +1148,9 @@ class MainWindow(QMainWindow):
             return
 
         self.current_result = result
+        self.analysis_status = "analyzed"
         self._update_export_actions()
+        self._update_status_summary()
 
         source_name = self.current_file_name or "In-memory data"
         self.log(
@@ -1148,7 +1299,15 @@ class MainWindow(QMainWindow):
             )
             return
 
-        file, _ = QFileDialog.getSaveFileName(self, "Save PDF report", f"report_{datetime.now():%Y%m%d_%H%M}.pdf", "PDF (*.pdf)")
+        file, _ = QFileDialog.getSaveFileName(
+            self,
+            "Save PDF report",
+            suggested_dialog_path(
+                self.settings,
+                f"report_{datetime.now():%Y%m%d_%H%M}.pdf",
+            ),
+            "PDF (*.pdf)",
+        )
         if not file:
             return
 
@@ -1230,6 +1389,7 @@ class MainWindow(QMainWindow):
             )
 
             QMessageBox.information(self, "Success", f"PDF report saved:\n{file}")
+            remember_last_directory(self.settings, file)
             self.log(
                 f"PDF report created: {display_file_label(file)}",
                 status_message=f"PDF report saved: {Path(file).name}",
@@ -1284,7 +1444,10 @@ class MainWindow(QMainWindow):
         file, _ = QFileDialog.getSaveFileName(
             self,
             "Export detected peaks",
-            f"peaks_{datetime.now():%Y%m%d_%H%M}.csv",
+            suggested_dialog_path(
+                self.settings,
+                f"peaks_{datetime.now():%Y%m%d_%H%M}.csv",
+            ),
             "CSV (*.csv)",
         )
         if not file:
@@ -1325,6 +1488,7 @@ class MainWindow(QMainWindow):
             write_peaks_csv(file, peaks, metadata)
 
             QMessageBox.information(self, "Success", f"Peak list saved:\n{file}")
+            remember_last_directory(self.settings, file)
             self.log(
                 f"Peak list exported: {display_file_label(file)} ({len(peaks)} peaks)",
                 status_message=f"Peak list saved: {Path(file).name}",

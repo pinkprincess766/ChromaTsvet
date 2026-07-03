@@ -21,6 +21,11 @@ from python_analyzer.core.identification import (
     normalize_data_type,
     peak_to_reference_peak,
 )
+from python_analyzer.gui.recent_files import (
+    load_last_directory,
+    load_recent_files,
+    remember_recent_file,
+)
 
 
 class FakeIdentifier:
@@ -161,6 +166,76 @@ class MainWindowErrorHandlingTest(unittest.TestCase):
 
         warning.assert_called_once()
         self.assertIn("Invalid spectrum file format", self.window.log_history[-1])
+
+    def test_load_file_remembers_recent_file_directory_and_status(self):
+        with TemporaryDirectory() as temp_dir:
+            file_path = Path(temp_dir) / "sample.csv"
+            file_path.write_text("intensity\n0.1\n0.3\n0.8\n0.2\n", encoding="utf-8")
+
+            with (
+                patch.object(
+                    main.QFileDialog,
+                    "getOpenFileName",
+                    return_value=(str(file_path), "CSV (*.csv)"),
+                ),
+                patch.object(QMessageBox, "warning", return_value=QMessageBox.Ok),
+            ):
+                self.window.load_file()
+
+            self.assertEqual(load_recent_files(self.window.settings), [str(file_path)])
+            self.assertEqual(load_last_directory(self.window.settings), temp_dir)
+            self.assertEqual(self.window.status_source_label.text(), "sample.csv")
+            self.assertIn("4 points", self.window.status_details_label.text())
+            self.assertIn("0 peaks", self.window.status_details_label.text())
+            self.assertIn("analyzed", self.window.status_details_label.text())
+            self.assertIn("threshold=0.050", self.window.status_details_label.text())
+
+            with patch.object(
+                main.QFileDialog,
+                "getOpenFileName",
+                return_value=("", ""),
+            ) as open_dialog:
+                self.window.load_file()
+
+            self.assertEqual(open_dialog.call_args.args[2], temp_dir)
+
+    def test_missing_recent_file_is_removed_without_path_leak(self):
+        with TemporaryDirectory() as temp_dir:
+            missing_file = Path(temp_dir) / "missing.csv"
+            self.window.recent_files = remember_recent_file(
+                self.window.settings,
+                missing_file,
+            )
+            self.window._refresh_recent_files_menu()
+
+            with patch.object(
+                QMessageBox,
+                "warning",
+                return_value=QMessageBox.Ok,
+            ) as warning:
+                self.window.open_recent_file(str(missing_file))
+
+            warning.assert_called_once()
+            self.assertEqual(load_recent_files(self.window.settings), [])
+            self.assertIn("Recent file unavailable", self.window.log_history[-1])
+            self.assertIn("missing.csv", self.window.log_history[-1])
+            self.assertNotIn(temp_dir, self.window.log_history[-1])
+
+    def test_clear_recent_files_removes_menu_entries(self):
+        with TemporaryDirectory() as temp_dir:
+            file_path = Path(temp_dir) / "sample.csv"
+            self.window.recent_files = remember_recent_file(
+                self.window.settings,
+                file_path,
+            )
+            self.window._refresh_recent_files_menu()
+
+        self.assertTrue(load_recent_files(self.window.settings))
+
+        self.window.clear_recent_files()
+
+        self.assertEqual(load_recent_files(self.window.settings), [])
+        self.assertEqual(self.window.recent_files_menu.actions()[0].text(), "No recent files")
 
     def test_database_failure_is_reported(self):
         self.window.identifier.clear_database = lambda: False
