@@ -5,7 +5,11 @@ import unittest
 
 from PIL import Image
 
-from python_analyzer.exporters.pdf_report import PDFReportData, PDFReportExporter
+from python_analyzer.exporters.pdf_report import (
+    PDFMatchRow,
+    PDFReportData,
+    PDFReportExporter,
+)
 
 
 class PDFReportExporterTest(unittest.TestCase):
@@ -35,7 +39,14 @@ class PDFReportExporterTest(unittest.TestCase):
                 ("Normalization", "disabled"),
             ],
             peaks=[peak],
-            matches=[("Reference", "R", "0.900", "1")],
+            matches=[
+                PDFMatchRow(
+                    substance_name="Reference",
+                    formula="R",
+                    score="0.900",
+                    compared_points="1",
+                )
+            ],
             source_file_name="sample.csv",
             data_points_count=128,
             peaks_count=1,
@@ -57,6 +68,31 @@ class PDFReportExporterTest(unittest.TestCase):
             self.assertGreater(output_path.stat().st_size, 0)
             with output_path.open("rb") as pdf_file:
                 self.assertEqual(pdf_file.read(4), b"%PDF")
+
+    def test_exporter_rejects_missing_plot_image_path(self):
+        report_data = PDFReportData(
+            title="ChromaTsvet Analysis Report",
+            subtitle="Spectral data and chromatogram analysis",
+            summary_rows=[],
+            parameter_rows=[],
+            peaks=[],
+            matches=[],
+            source_file_name="sample.csv",
+            data_points_count=0,
+            peaks_count=0,
+        )
+
+        with TemporaryDirectory() as temp_dir:
+            missing_plot = Path(temp_dir) / "missing.png"
+            output_path = Path(temp_dir) / "report.pdf"
+
+            with self.assertRaises(FileNotFoundError) as error_context:
+                PDFReportExporter().export(
+                    output_path,
+                    report_data,
+                    plot_image_path=missing_plot,
+                )
+            self.assertNotIn(temp_dir, str(error_context.exception))
 
 
 if __name__ == "__main__":
