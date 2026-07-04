@@ -9,6 +9,7 @@ from unittest.mock import patch
 
 import numpy as np
 from PyQt5.QtCore import QSettings
+from PyQt5.QtGui import QKeySequence
 from PyQt5.QtWidgets import QApplication, QMessageBox
 
 import python_analyzer.main as main
@@ -237,6 +238,30 @@ class MainWindowErrorHandlingTest(unittest.TestCase):
         self.assertEqual(load_recent_files(self.window.settings), [])
         self.assertEqual(self.window.recent_files_menu.actions()[0].text(), "No recent files")
 
+    def test_workflow_shortcuts_are_registered(self):
+        def shortcut_texts(action):
+            return [
+                shortcut.toString(QKeySequence.PortableText)
+                for shortcut in action.shortcuts()
+            ]
+
+        self.assertEqual(shortcut_texts(self.window.open_file_action), ["Ctrl+O"])
+        self.assertEqual(
+            shortcut_texts(self.window.run_analysis_action),
+            ["Ctrl+R", "F5"],
+        )
+        self.assertEqual(shortcut_texts(self.window.export_pdf_action), ["Ctrl+E"])
+        self.assertEqual(
+            shortcut_texts(self.window.export_peaks_action),
+            ["Ctrl+Shift+E"],
+        )
+        self.assertEqual(
+            shortcut_texts(self.window.analysis_settings_action),
+            ["Ctrl+,"],
+        )
+        self.assertIn("Ctrl+O", self.window.btn_open.toolTip())
+        self.assertIn("F5", self.window.btn_run.toolTip())
+
     def test_database_failure_is_reported(self):
         self.window.identifier.clear_database = lambda: False
 
@@ -294,6 +319,7 @@ class MainWindowErrorHandlingTest(unittest.TestCase):
 
     def test_peak_export_is_disabled_without_detected_peaks(self):
         self.assertFalse(self.window.btn_export_peaks.isEnabled())
+        self.assertFalse(self.window.export_peaks_action.isEnabled())
 
         with (
             patch.object(main.QFileDialog, "getSaveFileName") as save_dialog,
@@ -318,6 +344,7 @@ class MainWindowErrorHandlingTest(unittest.TestCase):
         self.process_signal.return_value = {"spectrum": [0.0, 1.0], "peaks": [peak]}
         self.window.run_analysis()
         self.assertTrue(self.window.btn_export_peaks.isEnabled())
+        self.assertTrue(self.window.export_peaks_action.isEnabled())
 
         with TemporaryDirectory() as temp_dir:
             output_path = Path(temp_dir) / "peaks.csv"

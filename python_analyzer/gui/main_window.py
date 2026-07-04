@@ -23,8 +23,8 @@ from PyQt5.QtWidgets import (
     QCheckBox, QDoubleSpinBox, QGroupBox, QStatusBar, QTabWidget, QAction
 )
 from PyQt5.QtCore import Qt, QSettings
-from PyQt5.QtGui import (QFont, QColor, QPalette, QFontDatabase, QPixmap,
-                         QTextCharFormat, QTextCursor)
+from PyQt5.QtGui import (QFont, QColor, QPalette, QFontDatabase, QKeySequence,
+                         QPixmap, QTextCharFormat, QTextCursor)
 import pyqtgraph as pg
 
 from paths import ensure_rust_in_path, get_library_db_path, get_project_root
@@ -84,6 +84,13 @@ DEFAULT_SPECTRUM_SMOOTHING_METHOD = "savgol"
 DEFAULT_SPECTRUM_SMOOTHING_WINDOW = 7
 APP_LOGO_PATH = get_project_root() / "assets" / "chromatsvet_logo.png"
 DEBUG_TRACEBACK_ENV = "CHROMATSVET_DEBUG_TRACEBACKS"
+WORKFLOW_SHORTCUTS = {
+    "open_file": ["Ctrl+O"],
+    "run_analysis": ["Ctrl+R", "F5"],
+    "export_pdf": ["Ctrl+E"],
+    "export_peaks": ["Ctrl+Shift+E"],
+    "analysis_settings": ["Ctrl+,"],
+}
 
 # Setup logging (from original)
 try:
@@ -416,14 +423,80 @@ class MainWindow(QMainWindow):
     def _create_menus(self):
         file_menu = self.menuBar().addMenu("&File")
 
-        self.open_file_action = QAction("Open Spectrum...", self)
-        self.open_file_action.setStatusTip("Open a CSV or TXT spectrum file")
-        self.open_file_action.triggered.connect(self.load_file)
+        self.open_file_action = self._create_workflow_action(
+            "Open Spectrum...",
+            "open_file",
+            self.load_file,
+            "Open a CSV or TXT spectrum file",
+        )
         file_menu.addAction(self.open_file_action)
 
         self.recent_files_menu = file_menu.addMenu("Recent Files")
         self.recent_files_menu.aboutToShow.connect(self._refresh_recent_files_menu)
         self._refresh_recent_files_menu()
+
+        analysis_menu = self.menuBar().addMenu("&Analysis")
+        self.run_analysis_action = self._create_workflow_action(
+            "Run Analysis",
+            "run_analysis",
+            self.run_analysis,
+            "Run analysis for the loaded spectrum",
+        )
+        self.analysis_settings_action = self._create_workflow_action(
+            "Analysis Settings...",
+            "analysis_settings",
+            self.open_analysis_settings,
+            "Open analysis settings",
+        )
+        analysis_menu.addAction(self.run_analysis_action)
+        analysis_menu.addAction(self.analysis_settings_action)
+
+        export_menu = self.menuBar().addMenu("&Export")
+        self.export_pdf_action = self._create_workflow_action(
+            "Export PDF Report",
+            "export_pdf",
+            self.export_pdf,
+            "Export the current analysis report as PDF",
+        )
+        self.export_peaks_action = self._create_workflow_action(
+            "Export Peaks CSV",
+            "export_peaks",
+            self.export_peaks_csv,
+            "Export detected peaks as CSV",
+        )
+        export_menu.addAction(self.export_pdf_action)
+        export_menu.addAction(self.export_peaks_action)
+
+        self._sync_button_shortcut_hints()
+
+    def _create_workflow_action(self, title, shortcut_key, callback, status_tip):
+        action = QAction(title, self)
+        action.setShortcuts(
+            [QKeySequence(shortcut) for shortcut in WORKFLOW_SHORTCUTS[shortcut_key]]
+        )
+        action.setStatusTip(status_tip)
+        action.triggered.connect(callback)
+        return action
+
+    def _workflow_shortcut_text(self, shortcut_key):
+        return " / ".join(WORKFLOW_SHORTCUTS[shortcut_key])
+
+    def _sync_button_shortcut_hints(self):
+        self.btn_open.setToolTip(
+            f"Open a spectrum file ({self._workflow_shortcut_text('open_file')})"
+        )
+        self.btn_run.setToolTip(
+            f"Run analysis ({self._workflow_shortcut_text('run_analysis')})"
+        )
+        self.btn_export.setToolTip(
+            f"Export PDF report ({self._workflow_shortcut_text('export_pdf')})"
+        )
+        self.btn_export_peaks.setToolTip(
+            f"Export detected peaks ({self._workflow_shortcut_text('export_peaks')})"
+        )
+        self.btn_analysis_settings.setToolTip(
+            f"Analysis settings ({self._workflow_shortcut_text('analysis_settings')})"
+        )
 
     def open_settings(self):
         SettingsDialog(self).exec()
@@ -845,6 +918,8 @@ class MainWindow(QMainWindow):
             else []
         )
         self.btn_export_peaks.setEnabled(bool(peaks))
+        if hasattr(self, "export_peaks_action"):
+            self.export_peaks_action.setEnabled(bool(peaks))
 
     def _update_result_tab_titles(self, peak_count, match_count):
         self.results_tabs.setTabText(0, f"Detected Peaks ({peak_count})")
