@@ -9,6 +9,7 @@ from unittest.mock import patch
 
 import numpy as np
 from PyQt5.QtCore import QSettings
+from PyQt5.QtGui import QKeySequence
 from PyQt5.QtWidgets import QApplication, QMessageBox
 
 import python_analyzer.main as main
@@ -20,6 +21,11 @@ from python_analyzer.core.identification import (
     find_peak_matches,
     normalize_data_type,
     peak_to_reference_peak,
+)
+from python_analyzer.gui.recent_files import (
+    load_last_directory,
+    load_recent_files,
+    remember_recent_file,
 )
 
 
@@ -162,6 +168,100 @@ class MainWindowErrorHandlingTest(unittest.TestCase):
         warning.assert_called_once()
         self.assertIn("Invalid spectrum file format", self.window.log_history[-1])
 
+    def test_load_file_remembers_recent_file_directory_and_status(self):
+        with TemporaryDirectory() as temp_dir:
+            file_path = Path(temp_dir) / "sample.csv"
+            file_path.write_text("intensity\n0.1\n0.3\n0.8\n0.2\n", encoding="utf-8")
+
+            with (
+                patch.object(
+                    main.QFileDialog,
+                    "getOpenFileName",
+                    return_value=(str(file_path), "CSV (*.csv)"),
+                ),
+                patch.object(QMessageBox, "warning", return_value=QMessageBox.Ok),
+            ):
+                self.window.load_file()
+
+            self.assertEqual(load_recent_files(self.window.settings), [str(file_path)])
+            self.assertEqual(load_last_directory(self.window.settings), temp_dir)
+            self.assertEqual(self.window.status_source_label.text(), "sample.csv")
+            self.assertIn("4 points", self.window.status_details_label.text())
+            self.assertIn("0 peaks", self.window.status_details_label.text())
+            self.assertIn("analyzed", self.window.status_details_label.text())
+            self.assertIn("threshold=0.050", self.window.status_details_label.text())
+
+            with patch.object(
+                main.QFileDialog,
+                "getOpenFileName",
+                return_value=("", ""),
+            ) as open_dialog:
+                self.window.load_file()
+
+            self.assertEqual(open_dialog.call_args.args[2], temp_dir)
+
+    def test_missing_recent_file_is_removed_without_path_leak(self):
+        with TemporaryDirectory() as temp_dir:
+            missing_file = Path(temp_dir) / "missing.csv"
+            self.window.recent_files = remember_recent_file(
+                self.window.settings,
+                missing_file,
+            )
+            self.window._refresh_recent_files_menu()
+
+            with patch.object(
+                QMessageBox,
+                "warning",
+                return_value=QMessageBox.Ok,
+            ) as warning:
+                self.window.open_recent_file(str(missing_file))
+
+            warning.assert_called_once()
+            self.assertEqual(load_recent_files(self.window.settings), [])
+            self.assertIn("Recent file unavailable", self.window.log_history[-1])
+            self.assertIn("missing.csv", self.window.log_history[-1])
+            self.assertNotIn(temp_dir, self.window.log_history[-1])
+
+    def test_clear_recent_files_removes_menu_entries(self):
+        with TemporaryDirectory() as temp_dir:
+            file_path = Path(temp_dir) / "sample.csv"
+            self.window.recent_files = remember_recent_file(
+                self.window.settings,
+                file_path,
+            )
+            self.window._refresh_recent_files_menu()
+
+        self.assertTrue(load_recent_files(self.window.settings))
+
+        self.window.clear_recent_files()
+
+        self.assertEqual(load_recent_files(self.window.settings), [])
+        self.assertEqual(self.window.recent_files_menu.actions()[0].text(), "No recent files")
+
+    def test_workflow_shortcuts_are_registered(self):
+        def shortcut_texts(action):
+            return [
+                shortcut.toString(QKeySequence.PortableText)
+                for shortcut in action.shortcuts()
+            ]
+
+        self.assertEqual(shortcut_texts(self.window.open_file_action), ["Ctrl+O"])
+        self.assertEqual(
+            shortcut_texts(self.window.run_analysis_action),
+            ["Ctrl+R", "F5"],
+        )
+        self.assertEqual(shortcut_texts(self.window.export_pdf_action), ["Ctrl+E"])
+        self.assertEqual(
+            shortcut_texts(self.window.export_peaks_action),
+            ["Ctrl+Shift+E"],
+        )
+        self.assertEqual(
+            shortcut_texts(self.window.analysis_settings_action),
+            ["Ctrl+,"],
+        )
+        self.assertIn("Ctrl+O", self.window.btn_open.toolTip())
+        self.assertIn("F5", self.window.btn_run.toolTip())
+
     def test_database_failure_is_reported(self):
         self.window.identifier.clear_database = lambda: False
 
@@ -219,6 +319,7 @@ class MainWindowErrorHandlingTest(unittest.TestCase):
 
     def test_peak_export_is_disabled_without_detected_peaks(self):
         self.assertFalse(self.window.btn_export_peaks.isEnabled())
+        self.assertFalse(self.window.export_peaks_action.isEnabled())
 
         with (
             patch.object(main.QFileDialog, "getSaveFileName") as save_dialog,
@@ -243,6 +344,7 @@ class MainWindowErrorHandlingTest(unittest.TestCase):
         self.process_signal.return_value = {"spectrum": [0.0, 1.0], "peaks": [peak]}
         self.window.run_analysis()
         self.assertTrue(self.window.btn_export_peaks.isEnabled())
+        self.assertTrue(self.window.export_peaks_action.isEnabled())
 
         with TemporaryDirectory() as temp_dir:
             output_path = Path(temp_dir) / "peaks.csv"
