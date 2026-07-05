@@ -8,8 +8,9 @@ import unittest
 from unittest.mock import patch
 
 
-ROOT_PATHS_FILE = Path(__file__).resolve().parent / "paths.py"
-PROXY_PATHS_FILE = Path(__file__).resolve().parent / "python_analyzer" / "paths.py"
+REPO_ROOT = Path(__file__).resolve().parents[2]
+ROOT_PATHS_FILE = REPO_ROOT / "paths.py"
+PROXY_PATHS_FILE = REPO_ROOT / "python_analyzer" / "paths.py"
 
 
 def load_paths_module(module_name, paths_file=ROOT_PATHS_FILE):
