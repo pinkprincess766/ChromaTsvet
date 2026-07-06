@@ -129,8 +129,36 @@ class MainWindowErrorHandlingTest(unittest.TestCase):
             self.window.load_file()
 
         warning.assert_called_once()
+        self.assertEqual(warning.call_args.args[1], "File not found")
+        self.assertIn("moved, renamed, or deleted", warning.call_args.args[2])
+        self.assertNotIn(missing_file, warning.call_args.args[2])
         self.assertIn("[ERROR]", self.window.log_history[-1])
         self.assertIn("FileNotFoundError", self.window.log_history[-1])
+        self.assertNotIn(missing_file, self.window.log_history[-1])
+
+    def test_decode_failure_message_is_actionable(self):
+        with TemporaryDirectory() as temp_dir:
+            file_path = Path(temp_dir) / "bad_encoding.csv"
+            file_path.write_bytes(b"intensity\n\xff\n")
+
+            with (
+                patch.object(
+                    main.QFileDialog,
+                    "getOpenFileName",
+                    return_value=(str(file_path), ""),
+                ),
+                patch.object(
+                    QMessageBox, "warning", return_value=QMessageBox.Ok
+                ) as warning,
+            ):
+                self.window.load_file()
+
+        warning.assert_called_once()
+        self.assertEqual(warning.call_args.args[1], "Unsupported text encoding")
+        self.assertIn("UTF-8 CSV/TXT", warning.call_args.args[2])
+        self.assertNotIn(temp_dir, warning.call_args.args[2])
+        self.assertIn("UnicodeDecodeError", self.window.log_history[-1])
+        self.assertNotIn(temp_dir, self.window.log_history[-1])
 
     def test_invalid_substance_input_is_reported(self):
         answers = [("Test", True), ("T", True), ("1,,2", True)]
@@ -166,6 +194,7 @@ class MainWindowErrorHandlingTest(unittest.TestCase):
                 self.window.load_file()
 
         warning.assert_called_once()
+        self.assertIn("How to fix", warning.call_args.args[2])
         self.assertIn("Invalid spectrum file format", self.window.log_history[-1])
 
     def test_load_file_remembers_recent_file_directory_and_status(self):

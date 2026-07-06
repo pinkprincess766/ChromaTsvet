@@ -39,6 +39,16 @@ INTENSITY_COLUMN_NAMES = {
 class SpectrumFileFormatError(ValueError):
     """Raised when a spectrum table has an unsupported or ambiguous layout."""
 
+    def __init__(self, message: str, *, hint: str | None = None):
+        super().__init__(message)
+        self.message = message
+        self.hint = hint
+
+    def __str__(self) -> str:
+        if self.hint:
+            return f"{self.message}\n\nHow to fix: {self.hint}"
+        return self.message
+
 
 def _normalize_column_name(value: str) -> str:
     return re.sub(r"[^\w]+", "", value.casefold(), flags=re.UNICODE)
@@ -105,7 +115,11 @@ def _select_intensity_column(
             return 1, 0
         raise SpectrumFileFormatError(
             "A table without a header must contain exactly two columns "
-            "(position and intensity)."
+            "(position and intensity).",
+            hint=(
+                "Add a header row with an intensity column, or keep the "
+                "headerless file to two columns: position and intensity."
+            ),
         )
 
     intensity_columns = [
@@ -119,7 +133,11 @@ def _select_intensity_column(
         )
         raise SpectrumFileFormatError(
             "Could not identify one intensity column. Use a header such as "
-            f"'intensity', 'amplitude', 'signal', or 'value'. Found: {available_columns}."
+            f"'intensity', 'amplitude', 'signal', or 'value'. Found: {available_columns}.",
+            hint=(
+                "Rename the measured signal column to intensity, amplitude, "
+                "signal, value, response, counts, or absorbance."
+            ),
         )
     return intensity_columns[0], 1
 
@@ -161,7 +179,12 @@ def read_spectrum_file(file_path: str | Path) -> Tuple[List[float], List[Tuple[i
         if len(row) != column_count:
             raise SpectrumFileFormatError(
                 f"Line {line_no} has {len(row)} columns; expected {column_count}. "
-                "Use one consistent delimiter throughout the file."
+                "Use one consistent delimiter throughout the file.",
+                hint=(
+                    "Use the same separator in every row: comma, semicolon, "
+                    "or tab. If values use decimal commas, separate columns "
+                    "with semicolons or tabs."
+                ),
             )
 
     intensity_column, first_data_row = _select_intensity_column(records, column_count)
