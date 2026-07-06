@@ -29,6 +29,7 @@ dependencies = [
     "pyqtgraph>=0.13",
     "reportlab>=4.0",
     "Pillow>=10.0",
+    "openpyxl>=3.1",
 ]
 
 [project.optional-dependencies]

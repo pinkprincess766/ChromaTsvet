@@ -8,6 +8,8 @@ import unittest
 from unittest.mock import patch
 
 import numpy as np
+from openpyxl import load_workbook
+from PIL import Image
 from PyQt5.QtCore import QSettings
 from PyQt5.QtGui import QKeySequence
 from PyQt5.QtWidgets import QApplication, QMessageBox
@@ -76,6 +78,11 @@ class MainWindowErrorHandlingTest(unittest.TestCase):
         self.window.close()
         self.process_patch.stop()
         self.identifier_patch.stop()
+
+    def create_test_plot_image(self, directory):
+        plot_path = Path(directory) / "plot.png"
+        Image.new("RGB", (320, 180), "white").save(plot_path)
+        return plot_path
 
     def test_log_levels_are_prefixed_and_colored(self):
         self.window.log("Warning entry", level="warning")
@@ -331,11 +338,17 @@ class MainWindowErrorHandlingTest(unittest.TestCase):
 
         with TemporaryDirectory() as temp_dir:
             output_path = Path(temp_dir) / "report.pdf"
+            plot_path = self.create_test_plot_image(temp_dir)
             with (
                 patch.object(
                     main.QFileDialog,
                     "getSaveFileName",
                     return_value=(str(output_path), "PDF (*.pdf)"),
+                ),
+                patch.object(
+                    self.window,
+                    "_render_plot_snapshot",
+                    return_value=str(plot_path),
                 ),
                 patch.object(QMessageBox, "information", return_value=QMessageBox.Ok),
             ):
@@ -345,6 +358,60 @@ class MainWindowErrorHandlingTest(unittest.TestCase):
             self.assertGreater(output_path.stat().st_size, 0)
 
         self.assertIn("PDF report created:", self.window.log_history[-1])
+
+    def test_html_report_writes_file(self):
+        self.window.run_analysis()
+
+        with TemporaryDirectory() as temp_dir:
+            output_path = Path(temp_dir) / "report.html"
+            plot_path = self.create_test_plot_image(temp_dir)
+            with (
+                patch.object(
+                    main.QFileDialog,
+                    "getSaveFileName",
+                    return_value=(str(output_path), "HTML (*.html)"),
+                ),
+                patch.object(
+                    self.window,
+                    "_render_plot_snapshot",
+                    return_value=str(plot_path),
+                ),
+                patch.object(QMessageBox, "information", return_value=QMessageBox.Ok),
+            ):
+                self.window.export_html()
+
+            self.assertTrue(output_path.is_file())
+            html = output_path.read_text(encoding="utf-8")
+
+        self.assertIn("ChromaTsvet Analysis Report", html)
+        self.assertIn("In-memory data", html)
+        self.assertIn("data:image/png;base64,", html)
+        self.assertIn("HTML report created:", self.window.log_history[-1])
+
+    def test_excel_report_writes_workbook(self):
+        self.window.run_analysis()
+
+        with TemporaryDirectory() as temp_dir:
+            output_path = Path(temp_dir) / "report.xlsx"
+            with (
+                patch.object(
+                    main.QFileDialog,
+                    "getSaveFileName",
+                    return_value=(str(output_path), "Excel Workbook (*.xlsx)"),
+                ),
+                patch.object(QMessageBox, "information", return_value=QMessageBox.Ok),
+            ):
+                self.window.export_excel()
+
+            workbook = load_workbook(output_path, data_only=True)
+
+        self.assertEqual(
+            workbook.sheetnames,
+            ["Summary", "Parameters", "Peaks", "Matches"],
+        )
+        self.assertEqual(workbook["Summary"]["A5"].value, "Source file")
+        self.assertEqual(workbook["Summary"]["B5"].value, "In-memory data")
+        self.assertIn("Excel workbook created:", self.window.log_history[-1])
 
     def test_peak_export_is_disabled_without_detected_peaks(self):
         self.assertFalse(self.window.btn_export_peaks.isEnabled())
