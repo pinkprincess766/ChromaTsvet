@@ -13,6 +13,7 @@ from PyQt5.QtCore import Qt
 from PyQt5.QtGui import QFont, QFontDatabase, QTextCursor
 
 from python_analyzer.core.identification import DATA_TYPE_CHOICES, normalize_data_type
+from python_analyzer.analysis.windowing import FFT_WINDOW_CHOICES, normalize_fft_window_type
 from python_analyzer.gui.log_view import append_log_entry, log_level_from_entry
 from python_analyzer.gui.theme import FONT_CANDIDATES
 
@@ -213,6 +214,16 @@ class AnalysisSettingsDialog(QDialog):
         self.sample_rate_spin.setValue(parent.sample_rate)
         self.sample_rate_spin.setToolTip("Sampling rate used to convert FFT bins to frequency")
         acquisition_form.addRow("Sample rate", self.sample_rate_spin)
+
+        self.window_type_combo = QComboBox()
+        for label, value in FFT_WINDOW_CHOICES:
+            self.window_type_combo.addItem(label, value)
+        window_index = self.window_type_combo.findData(
+            normalize_fft_window_type(getattr(parent, "window_type", DEFAULT_WINDOW_TYPE))
+        )
+        self.window_type_combo.setCurrentIndex(max(0, window_index))
+        self.window_type_combo.setToolTip("FFT window applied before computing the spectrum")
+        acquisition_form.addRow("FFT window", self.window_type_combo)
         layout.addWidget(acquisition_group)
 
         normalization_group = QGroupBox("Spectrum normalization")
@@ -411,6 +422,7 @@ class AnalysisSettingsDialog(QDialog):
             filter_type=filter_type,
             filter_params=filter_params,
             sample_rate=self.sample_rate_spin.value(),
+            window_type=self.window_type_combo.currentData(),
             normalize_area=self.normalize_area_checkbox.isChecked(),
             spectrum_smoothing_enabled=self.spectrum_smoothing_checkbox.isChecked(),
             spectrum_smoothing_method=self.spectrum_smoothing_method_combo.currentData(),
