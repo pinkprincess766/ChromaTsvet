@@ -44,6 +44,8 @@ from python_analyzer.analysis.windowing import (
     normalize_fft_window_type,
 )
 from python_analyzer.exporters import (
+    ExcelReportExporter,
+    HTMLReportExporter,
     PDFMatchRow,
     PDFReportData,
     PDFReportExporter,
@@ -455,6 +457,12 @@ class MainWindow(QMainWindow):
             self.export_pdf,
             "Export the current analysis report as PDF",
         )
+        self.export_html_action = QAction("Export HTML Report", self)
+        self.export_html_action.setStatusTip("Export the current analysis report as HTML")
+        self.export_html_action.triggered.connect(self.export_html)
+        self.export_excel_action = QAction("Export Excel Workbook", self)
+        self.export_excel_action.setStatusTip("Export the current analysis as an Excel workbook")
+        self.export_excel_action.triggered.connect(self.export_excel)
         self.export_peaks_action = self._create_workflow_action(
             "Export Peaks CSV",
             "export_peaks",
@@ -462,6 +470,9 @@ class MainWindow(QMainWindow):
             "Export detected peaks as CSV",
         )
         export_menu.addAction(self.export_pdf_action)
+        export_menu.addAction(self.export_html_action)
+        export_menu.addAction(self.export_excel_action)
+        export_menu.addSeparator()
         export_menu.addAction(self.export_peaks_action)
 
         self._sync_button_shortcut_hints()
@@ -1369,6 +1380,108 @@ class MainWindow(QMainWindow):
         self.log("Reference library restored", status_message="Reference library restored")
         self.run_analysis()
 
+    def _collect_report_matches(self):
+        matches = []
+        for row in range(self.table.rowCount()):
+            matches.append(
+                PDFMatchRow(
+                    substance_name=self._table_text(row, 0),
+                    formula=self._table_text(row, 1),
+                    score=self._table_text(row, 2),
+                    compared_points=self._table_text(row, 3),
+                )
+            )
+        return matches
+
+    def _table_text(self, row, column):
+        item = self.table.item(row, column)
+        return item.text() if item is not None else ""
+
+    def _build_report_data(self):
+        source_file_name = self.display_source_name()
+        data_points_count = len(self.current_data) if self.current_data else 0
+        peaks = self.current_result.get("peaks", []) if self.current_result else []
+        summary_rows = [
+            ("Date", f"{datetime.now():%Y-%m-%d %H:%M}"),
+            ("App version", APP_VERSION),
+            ("Rust core", spectrometer_rust.get_version()),
+            ("Source file", source_file_name),
+            ("Data points", str(data_points_count)),
+            ("Peaks found", str(len(peaks))),
+        ]
+
+        baseline_description = (
+            self.baseline_method if self.baseline_enabled else "disabled"
+        )
+        normalization_description = (
+            "area" if self.current_result.get("normalized") else "disabled"
+        )
+        smoothing_description = (
+            f"{self.spectrum_smoothing_method}/{self.spectrum_smoothing_window}"
+            if self.spectrum_smoothing_enabled
+            else "disabled"
+        )
+        parameter_rows = [
+            ("Sample rate", f"{self.sample_rate:g} Hz"),
+            ("FFT window", self.window_type),
+            ("Signal filter", self.filter_type),
+            ("Filter params", self.filter_params),
+            ("Baseline", baseline_description),
+            ("Spectrum smoothing", smoothing_description),
+            ("Normalization", normalization_description),
+            ("Data type", self.data_type),
+            ("Peak tolerance", f"{self.peak_frequency_tolerance:g} Hz"),
+            ("Threshold", f"{self.peak_threshold:.3f}"),
+            (
+                "Prominence",
+                "automatic" if self.peak_prominence == 0 else f"{self.peak_prominence:g}",
+            ),
+            (
+                "Minimum SNR",
+                "disabled" if self.peak_min_snr == 0 else f"{self.peak_min_snr:g}",
+            ),
+            ("Distance", f"{self.peak_distance} points"),
+        ]
+
+        return PDFReportData(
+            title="ChromaTsvet Analysis Report",
+            subtitle="Spectral data and chromatogram analysis",
+            summary_rows=summary_rows,
+            parameter_rows=parameter_rows,
+            peaks=peaks,
+            matches=self._collect_report_matches(),
+            source_file_name=source_file_name,
+            data_points_count=data_points_count,
+            peaks_count=len(peaks),
+        )
+
+    def _render_plot_snapshot(self):
+        plot_file = tempfile.NamedTemporaryFile(delete=False, suffix=".png")
+        plot_path = plot_file.name
+        plot_file.close()
+        QApplication.processEvents()
+        if not self.plot.grab().save(plot_path, "PNG"):
+            try:
+                os.unlink(plot_path)
+            except OSError:
+                pass
+            raise OSError("the spectrum plot could not be rendered")
+        return plot_path
+
+    def _remove_report_snapshot(self, plot_path):
+        if not plot_path or not os.path.exists(plot_path):
+            return
+
+        try:
+            os.unlink(plot_path)
+        except OSError as exc:
+            self.log(
+                f"Could not remove temporary report image: {display_file_label(plot_path)} "
+                f"({type(exc).__name__}: {safe_exception_details(exc)})",
+                status_message="Temporary report file could not be removed",
+                level="warning",
+            )
+
     def export_pdf(self):
         if not self.current_result:
             self._show_warning(
@@ -1392,74 +1505,8 @@ class MainWindow(QMainWindow):
 
         plot_path = None
         try:
-            plot_file = tempfile.NamedTemporaryFile(delete=False, suffix=".png")
-            plot_path = plot_file.name
-            plot_file.close()
-            QApplication.processEvents()
-            if not self.plot.grab().save(plot_path, "PNG"):
-                raise OSError("the spectrum plot could not be rendered")
-
-            source_file_name = self.display_source_name()
-            data_points_count = len(self.current_data) if self.current_data else 0
-            peaks = self.current_result["peaks"]
-            summary_rows = [
-                ("Date", f"{datetime.now():%Y-%m-%d %H:%M}"),
-                ("App version", APP_VERSION),
-                ("Rust core", spectrometer_rust.get_version()),
-                ("Source file", source_file_name),
-                ("Data points", str(data_points_count)),
-                ("Peaks found", str(len(peaks))),
-            ]
-
-            baseline_description = (
-                self.baseline_method if self.baseline_enabled else "disabled"
-            )
-            normalization_description = (
-                "area" if self.current_result.get("normalized") else "disabled"
-            )
-            smoothing_description = (
-                f"{self.spectrum_smoothing_method}/{self.spectrum_smoothing_window}"
-                if self.spectrum_smoothing_enabled
-                else "disabled"
-            )
-            parameter_rows = [
-                ("Sample rate", f"{self.sample_rate:g} Hz"),
-                ("FFT window", self.window_type),
-                ("Signal filter", self.filter_type),
-                ("Filter params", self.filter_params),
-                ("Baseline", baseline_description),
-                ("Spectrum smoothing", smoothing_description),
-                ("Normalization", normalization_description),
-                ("Data type", self.data_type),
-                ("Peak tolerance", f"{self.peak_frequency_tolerance:g} Hz"),
-                ("Threshold", f"{self.peak_threshold:.3f}"),
-                ("Prominence", "automatic" if self.peak_prominence == 0 else f"{self.peak_prominence:g}"),
-                ("Minimum SNR", "disabled" if self.peak_min_snr == 0 else f"{self.peak_min_snr:g}"),
-                ("Distance", f"{self.peak_distance} points"),
-            ]
-
-            matches = []
-            for row in range(self.table.rowCount()):
-                matches.append(
-                    PDFMatchRow(
-                        substance_name=self.table.item(row, 0).text(),
-                        formula=self.table.item(row, 1).text(),
-                        score=self.table.item(row, 2).text(),
-                        compared_points=self.table.item(row, 3).text(),
-                    )
-                )
-
-            report_data = PDFReportData(
-                title="ChromaTsvet Analysis Report",
-                subtitle="Spectral data and chromatogram analysis",
-                summary_rows=summary_rows,
-                parameter_rows=parameter_rows,
-                peaks=peaks,
-                matches=matches,
-                source_file_name=source_file_name,
-                data_points_count=data_points_count,
-                peaks_count=len(peaks),
-            )
+            report_data = self._build_report_data()
+            plot_path = self._render_plot_snapshot()
             PDFReportExporter().export(
                 file,
                 report_data,
@@ -1489,16 +1536,108 @@ class MainWindow(QMainWindow):
                 status_message="PDF report creation failed",
             )
         finally:
-            if plot_path and os.path.exists(plot_path):
-                try:
-                    os.unlink(plot_path)
-                except OSError as exc:
-                    self.log(
-                        f"Could not remove temporary report image: {display_file_label(plot_path)} "
-                        f"({type(exc).__name__}: {safe_exception_details(exc)})",
-                        status_message="Temporary report file could not be removed",
-                        level="warning",
-                    )
+            self._remove_report_snapshot(plot_path)
+
+    def export_html(self):
+        if not self.current_result:
+            self._show_warning(
+                "No analysis results",
+                "Analyze a spectrum before exporting a report.",
+                status_message="No analysis results to export",
+            )
+            return
+
+        file, _ = QFileDialog.getSaveFileName(
+            self,
+            "Save HTML report",
+            suggested_dialog_path(
+                self.settings,
+                f"report_{datetime.now():%Y%m%d_%H%M}.html",
+            ),
+            "HTML (*.html)",
+        )
+        if not file:
+            return
+
+        plot_path = None
+        try:
+            report_data = self._build_report_data()
+            plot_path = self._render_plot_snapshot()
+            HTMLReportExporter().export(
+                file,
+                report_data,
+                plot_image_path=plot_path,
+            )
+
+            QMessageBox.information(self, "Success", f"HTML report saved:\n{file}")
+            remember_last_directory(self.settings, file)
+            self.log(
+                f"HTML report created: {display_file_label(file)}",
+                status_message=f"HTML report saved: {Path(file).name}",
+            )
+        except PermissionError as exc:
+            self._show_error(
+                "Could not save report",
+                "The HTML report could not be saved because access to the selected location was denied.",
+                exception=exc,
+                status_message="HTML report was not saved",
+            )
+        except Exception as exc:
+            self._show_error(
+                "Could not create report",
+                "The HTML report could not be created. Choose another location and try again.",
+                exception=exc,
+                critical=True,
+                status_message="HTML report creation failed",
+            )
+        finally:
+            self._remove_report_snapshot(plot_path)
+
+    def export_excel(self):
+        if not self.current_result:
+            self._show_warning(
+                "No analysis results",
+                "Analyze a spectrum before exporting an Excel workbook.",
+                status_message="No analysis results to export",
+            )
+            return
+
+        file, _ = QFileDialog.getSaveFileName(
+            self,
+            "Save Excel workbook",
+            suggested_dialog_path(
+                self.settings,
+                f"report_{datetime.now():%Y%m%d_%H%M}.xlsx",
+            ),
+            "Excel Workbook (*.xlsx)",
+        )
+        if not file:
+            return
+
+        try:
+            ExcelReportExporter().export(file, self._build_report_data())
+
+            QMessageBox.information(self, "Success", f"Excel workbook saved:\n{file}")
+            remember_last_directory(self.settings, file)
+            self.log(
+                f"Excel workbook created: {display_file_label(file)}",
+                status_message=f"Excel workbook saved: {Path(file).name}",
+            )
+        except PermissionError as exc:
+            self._show_error(
+                "Could not save workbook",
+                "The Excel workbook could not be saved because access to the selected location was denied.",
+                exception=exc,
+                status_message="Excel workbook was not saved",
+            )
+        except Exception as exc:
+            self._show_error(
+                "Could not create workbook",
+                "The Excel workbook could not be created. Choose another location and try again.",
+                exception=exc,
+                critical=True,
+                status_message="Excel workbook creation failed",
+            )
 
     def export_peaks_csv(self):
         if self.current_result is None:
