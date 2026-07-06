@@ -47,6 +47,11 @@ from python_analyzer.exporters import (
 )
 from python_analyzer.viz.spectrum_plot import SpectrumPlot
 from python_analyzer.gui.dialogs import SettingsDialog, LogWindow, AnalysisSettingsDialog
+from python_analyzer.gui.error_messages import (
+    display_file_label,
+    safe_exception_details,
+    spectrum_read_error_text,
+)
 from python_analyzer.gui.log_view import (
     LOG_LEVEL_LABELS,
     append_log_entry,
@@ -146,22 +151,6 @@ def saved_int(settings, key, default, minimum, maximum):
 def debug_tracebacks_enabled():
     value = os.environ.get(DEBUG_TRACEBACK_ENV, "")
     return str(value).strip().lower() in ("1", "true", "yes", "on")
-
-def display_file_label(path):
-    try:
-        return Path(path).name or "selected file"
-    except (TypeError, ValueError):
-        return "selected file"
-
-def safe_exception_details(exception):
-    if isinstance(exception, OSError):
-        if getattr(exception, "strerror", None):
-            return exception.strerror
-        details = str(exception).strip()
-        if details and not getattr(exception, "filename", None):
-            return details
-        return type(exception).__name__
-    return str(exception).strip() or repr(exception)
 
 def normalized_filter_settings(filter_type, filter_params=None):
     try:
@@ -1052,11 +1041,12 @@ class MainWindow(QMainWindow):
             )
             return
         except (OSError, UnicodeError, csv.Error) as exc:
+            error_text = spectrum_read_error_text(exc)
             self._show_error(
-                "Could not open file",
-                "The selected spectrum file could not be read. Check its encoding and permissions.",
+                error_text.title,
+                error_text.message,
                 exception=exc,
-                status_message="Could not read spectrum file",
+                status_message=error_text.status_message,
             )
             return
         except Exception as exc:
