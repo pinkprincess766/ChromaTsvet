@@ -498,6 +498,10 @@ class MainWindowErrorHandlingTest(unittest.TestCase):
             self.process_signal.call_args.kwargs["sample_rate"],
             main.DEFAULT_SAMPLE_RATE,
         )
+        self.assertEqual(
+            self.process_signal.call_args.kwargs["window_type"],
+            main.DEFAULT_WINDOW_TYPE,
+        )
 
     def test_analysis_settings_are_saved_and_passed_to_rust(self):
         self.window.set_analysis_settings(
@@ -509,6 +513,7 @@ class MainWindowErrorHandlingTest(unittest.TestCase):
             filter_type=self.window.filter_type,
             filter_params=self.window.filter_params,
             sample_rate=2_500.0,
+            window_type="hamming",
             normalize_area=True,
             peak_min_snr=4.5,
             spectrum_smoothing_enabled=True,
@@ -520,6 +525,7 @@ class MainWindowErrorHandlingTest(unittest.TestCase):
 
         self.assertTrue(self.window.normalize_area)
         self.assertEqual(self.window.sample_rate, 2_500.0)
+        self.assertEqual(self.window.window_type, "hamming")
         self.assertEqual(self.window.peak_min_snr, 4.5)
         self.assertTrue(self.window.spectrum_smoothing_enabled)
         self.assertEqual(self.window.spectrum_smoothing_method, "savgol")
@@ -544,6 +550,7 @@ class MainWindowErrorHandlingTest(unittest.TestCase):
             2_500.0,
         )
         self.assertEqual(self.process_signal.call_args.kwargs["sample_rate"], 2_500.0)
+        self.assertEqual(self.process_signal.call_args.kwargs["window_type"], "hamming")
         self.assertTrue(self.process_signal.call_args.kwargs["normalize"])
         self.assertEqual(self.process_signal.call_args.kwargs["min_snr"], 4.5)
         self.assertTrue(self.process_signal.call_args.kwargs["spectrum_smoothing"])
@@ -559,6 +566,9 @@ class MainWindowErrorHandlingTest(unittest.TestCase):
     def test_analysis_dialog_applies_identification_settings(self):
         dialog = main.AnalysisSettingsDialog(self.window)
         try:
+            dialog.window_type_combo.setCurrentIndex(
+                dialog.window_type_combo.findData("rectangular")
+            )
             dialog.spectrum_smoothing_checkbox.setChecked(True)
             dialog.spectrum_smoothing_window_spin.setValue(10)
             dialog.min_snr_spin.setValue(3.25)
@@ -572,6 +582,7 @@ class MainWindowErrorHandlingTest(unittest.TestCase):
             dialog.close()
 
         self.assertTrue(self.window.spectrum_smoothing_enabled)
+        self.assertEqual(self.window.window_type, "rectangular")
         self.assertEqual(self.window.spectrum_smoothing_window, 11)
         self.assertEqual(self.window.peak_min_snr, 3.25)
         self.assertEqual(self.window.peak_frequency_tolerance, 17.25)

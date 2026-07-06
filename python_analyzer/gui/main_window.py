@@ -39,6 +39,10 @@ from python_analyzer.core.identification import (
 from python_analyzer.readers import read_spectrum_file, SpectrumFileFormatError
 from python_analyzer.analysis.models import AnalysisSettings, LoadedSpectrum
 from python_analyzer.analysis.runner import run_analysis as run_analysis_pipeline
+from python_analyzer.analysis.windowing import (
+    DEFAULT_FFT_WINDOW,
+    normalize_fft_window_type,
+)
 from python_analyzer.exporters import (
     PDFMatchRow,
     PDFReportData,
@@ -78,7 +82,7 @@ DEFAULT_FONT_SIZE = 12
 DEFAULT_BASELINE_ENABLED = True
 DEFAULT_BASELINE_METHOD = "improved"
 DEFAULT_SAMPLE_RATE = 1000.0
-DEFAULT_WINDOW_TYPE = "hann"
+DEFAULT_WINDOW_TYPE = DEFAULT_FFT_WINDOW
 DEFAULT_PEAK_THRESHOLD = 0.05
 DEFAULT_PEAK_PROMINENCE = 0.0
 DEFAULT_PEAK_DISTANCE = 1
@@ -210,6 +214,9 @@ class MainWindow(QMainWindow):
             DEFAULT_SAMPLE_RATE,
             0.001,
             10_000_000.0,
+        )
+        self.window_type = normalize_fft_window_type(
+            self.settings.value("analysis/window_type", DEFAULT_WINDOW_TYPE)
         )
         self.peak_threshold = saved_float(
             self.settings, "analysis/peak_threshold", DEFAULT_PEAK_THRESHOLD, 0.001, 1.0
@@ -574,6 +581,7 @@ class MainWindow(QMainWindow):
         filter_type=DEFAULT_FILTER_TYPE,
         filter_params=None,
         sample_rate=DEFAULT_SAMPLE_RATE,
+        window_type=DEFAULT_WINDOW_TYPE,
         normalize_area=DEFAULT_NORMALIZE_AREA,
         spectrum_smoothing_enabled=DEFAULT_SPECTRUM_SMOOTHING_ENABLED,
         spectrum_smoothing_method=DEFAULT_SPECTRUM_SMOOTHING_METHOD,
@@ -600,6 +608,7 @@ class MainWindow(QMainWindow):
             normalized_sample_rate = max(
                 0.001, min(10_000_000.0, float(sample_rate))
             )
+            normalized_window_type = normalize_fft_window_type(window_type)
             normalized_area_enabled = bool(normalize_area)
             normalized_smoothing_enabled = bool(spectrum_smoothing_enabled)
             normalized_smoothing_method = (
@@ -634,6 +643,7 @@ class MainWindow(QMainWindow):
         self.peak_distance = normalized_peak_distance
         self.peak_min_snr = normalized_peak_min_snr
         self.sample_rate = normalized_sample_rate
+        self.window_type = normalized_window_type
         self.filter_type = normalized_filter_type
         self.filter_params = normalized_filter_params
         self.normalize_area = normalized_area_enabled
@@ -648,6 +658,7 @@ class MainWindow(QMainWindow):
         self.settings.setValue("analysis/baseline_enabled", self.baseline_enabled)
         self.settings.setValue("analysis/baseline_method", self.baseline_method)
         self.settings.setValue("analysis/sample_rate", self.sample_rate)
+        self.settings.setValue("analysis/window_type", self.window_type)
         self.settings.setValue("analysis/peak_threshold", self.peak_threshold)
         self.settings.setValue("analysis/peak_prominence", self.peak_prominence)
         self.settings.setValue("analysis/peak_distance", self.peak_distance)
@@ -695,6 +706,7 @@ class MainWindow(QMainWindow):
             f"prominence={self.peak_prominence:g}, min_snr={self.peak_min_snr:g}, "
             f"distance={self.peak_distance}, "
             f"sample_rate={self.sample_rate:g} Hz, "
+            f"window={self.window_type}, "
             f"filter={self.filter_type}, filter_params={self.filter_params}, "
             f"smoothing={smoothing_description}, "
             f"normalization={'area' if self.normalize_area else 'disabled'}",
@@ -897,7 +909,8 @@ class MainWindow(QMainWindow):
         )
         return (
             f"filter={filter_description}, threshold={self.peak_threshold:.3f}, "
-            f"baseline={baseline_description}, smoothing={smoothing_description}, "
+            f"baseline={baseline_description}, window={self.window_type}, "
+            f"smoothing={smoothing_description}, "
             f"sample_rate={self.sample_rate:g} Hz"
         )
 
@@ -927,7 +940,7 @@ class MainWindow(QMainWindow):
             peak_distance=self.peak_distance,
             normalize_area=self.normalize_area,
             peak_min_snr=getattr(self, "peak_min_snr", DEFAULT_PEAK_MIN_SNR),
-            window_type=DEFAULT_WINDOW_TYPE,
+            window_type=getattr(self, "window_type", DEFAULT_WINDOW_TYPE),
             spectrum_smoothing_enabled=getattr(
                 self,
                 "spectrum_smoothing_enabled",
@@ -1411,7 +1424,7 @@ class MainWindow(QMainWindow):
             )
             parameter_rows = [
                 ("Sample rate", f"{self.sample_rate:g} Hz"),
-                ("FFT window", DEFAULT_WINDOW_TYPE),
+                ("FFT window", self.window_type),
                 ("Signal filter", self.filter_type),
                 ("Filter params", self.filter_params),
                 ("Baseline", baseline_description),
@@ -1527,6 +1540,7 @@ class MainWindow(QMainWindow):
                     self.sample_rate,
                 ),
                 "filter_type": self.filter_type,
+                "fft_window": self.window_type,
                 "baseline": self.current_result.get(
                     "baseline_method",
                     self.baseline_method if self.baseline_enabled else "none",

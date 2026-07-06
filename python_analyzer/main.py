@@ -25,6 +25,7 @@ from python_analyzer.gui.dialogs import AnalysisSettingsDialog, LogWindow, Setti
 from python_analyzer.gui.main_window import (
     APP_LOGO_PATH,
     DEFAULT_SAMPLE_RATE,
+    DEFAULT_WINDOW_TYPE,
     app_settings,
     saved_bool,
     saved_float,
@@ -41,6 +42,7 @@ __all__ = [
     "APP_LOGO_PATH",
     "AnalysisSettingsDialog",
     "DEFAULT_SAMPLE_RATE",
+    "DEFAULT_WINDOW_TYPE",
     "LogWindow",
     "MainWindow",
     "QApplication",
