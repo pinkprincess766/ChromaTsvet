@@ -1,10 +1,10 @@
-[English version](README.md)
+[English version](README.md) | [Русская версия](README.ru.md)
 
 # ChromaTsvet
 
 **ChromaTsvet** は、CSV/TXT のスペクトルデータやクロマトグラムを読み込み、処理、可視化、簡易同定するためのデスクトップアプリケーションです。
 
-Python/PyQt による UI と Rust/PyO3 による信号処理コアを組み合わせています。v0.1.0 は最初の公開ソースリリースであり、実験、デモ、今後の科学ツール開発の土台として使うことを目的としています。検証済みの研究機器ではありません。
+Python/PyQt による UI と Rust/PyO3 による信号処理コアを組み合わせています。v0.2.0 は日常的な作業フローを改善する alpha リリースであり、実験、デモ、今後の科学ツール開発の土台として使うことを目的としています。検証済みの研究機器ではありません。
 
 ## 主な機能
 
@@ -14,9 +14,10 @@ Python/PyQt による UI と Rust/PyO3 による信号処理コアを組み合�
 - area normalization
 - ピーク検出、FWHM 幅、Gaussian area、SNR
 - ピークのグラフ表示とテーブル表示
+- Recent Files、最後に使ったディレクトリ、基本的な keyboard shortcuts
 - SQLite 参照ライブラリとの簡易比較
 - ピーク CSV エクスポート
-- PDF レポート出力
+- PDF / HTML / Excel レポート出力
 - light / dark theme
 
 ## ソースからの起動
@@ -41,6 +42,12 @@ cd rust_module
 maturin develop
 cd ..
 
+chromatsvet
+```
+
+従来の直接起動も引き続き利用できます。
+
+```bash
 python python_analyzer/main.py
 ```
 
@@ -55,7 +62,7 @@ Windows では仮想環境を次のように有効化します。
 ## テスト
 
 ```bash
-QT_QPA_PLATFORM=offscreen python -m unittest discover -v
+QT_QPA_PLATFORM=offscreen python -m pytest -v
 cd rust_module
 cargo test
 ```
@@ -67,6 +74,7 @@ python_analyzer/
   main.py                    起動用 bootstrap
   gui/                       MainWindow、dialogs、theme、log view
   analysis/                  analysis settings と pipeline wrapper
+  exporters/                 PDF / HTML / Excel / peak CSV export
   readers/                   CSV/TXT parser
   viz/                       spectrum plot と peak markers
   core/identification.py     SQLite reference matching
@@ -76,6 +84,8 @@ rust_module/src/
   signal/                    filters、FFT、normalization、peak detection
   types.rs                   Python から見える Peak 型
 ```
+
+注意: 日本語 README は英語版とロシア語版より遅れて更新される場合があります。最新の詳細は [English README](README.md) または [Русская версия](README.ru.md) を参照してください。
 
 ## ライセンス
 

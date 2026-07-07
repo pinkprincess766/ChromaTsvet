@@ -77,7 +77,7 @@ from python_analyzer.gui.theme import FONT_CANDIDATES, apply_app_theme
 # Top level constants and functions needed (copied from original for self contained)
 APP_ORG = "ChromaTsvet"
 APP_NAME = "ChromaTsvet"
-APP_VERSION = "0.1.0"
+APP_VERSION = "0.2.0"
 WINDOW_TITLE = "ChromaTsvet — Spectral Data Analysis"
 DEFAULT_THEME = "dark"
 DEFAULT_FONT_SIZE = 12
