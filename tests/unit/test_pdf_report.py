@@ -28,7 +28,7 @@ class PDFReportExporterTest(unittest.TestCase):
             subtitle="Spectral data and chromatogram analysis",
             summary_rows=[
                 ("Date", "2026-07-01 21:59"),
-                ("App version", "0.1.0"),
+                ("App version", "0.2.0"),
                 ("Source file", "sample.csv"),
                 ("Data points", "128"),
                 ("Peaks found", "1"),

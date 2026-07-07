@@ -1,4 +1,4 @@
-<p align="right"><a href="README.ja.md">日本語</a></p>
+<p align="right"><a href="README.ru.md">Русский</a> | <a href="README.ja.md">日本語</a></p>
 
 <p align="center">
   <img src="assets/chromatsvet_readme_logo.png" alt="ChromaTsvet logo" width="430">
@@ -13,7 +13,7 @@
 
 <p align="center">
   <a href="https://github.com/pinkprincess766/ChromaTsvet/actions/workflows/ci.yml"><img src="https://github.com/pinkprincess766/ChromaTsvet/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
-  <img src="https://img.shields.io/badge/release-v0.1.0-2f855a" alt="Release v0.1.0">
+  <img src="https://img.shields.io/badge/release-v0.2.0-2f855a" alt="Release v0.2.0">
   <img src="https://img.shields.io/badge/Python-3.9%2B-3776ab" alt="Python 3.9+">
   <img src="https://img.shields.io/badge/Rust-PyO3-b7410e" alt="Rust and PyO3">
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-4c566a" alt="MIT license"></a>
@@ -28,13 +28,44 @@ Semyonovich Tsvet, the botanist who invented chromatography.
 
 ## Project Status
 
-ChromaTsvet v0.1.0 is a first public, source-based release. It is ready for
-local experiments, demonstrations, and iterative scientific tooling work, but it
-is not yet a validated laboratory instrument. Continuous integration runs the
-Python and Rust test suites. Peak-based identification is now available as an
-inspectable baseline with legacy cosine matching kept as a compatibility
-fallback; packaged installers and richer reference-library workflows are planned
-after v0.1.
+ChromaTsvet v0.2.0 is an alpha, source-based release focused on everyday
+workflow: repeated file loading, clearer analysis state, configurable numerical
+settings, and richer report export. It is ready for local experiments,
+demonstrations, and iterative scientific tooling work, but it is not yet a
+validated laboratory instrument.
+
+Continuous integration runs the Python and Rust test suites. The Python tests
+now use pytest, and the project includes deterministic synthetic spectra for
+regression checks around peak detection. Peak-based identification is available
+as an inspectable baseline with legacy cosine matching kept as a compatibility
+fallback.
+
+## What's New in v0.2
+
+v0.2 focuses on making daily work with spectral data more convenient and less
+repetitive.
+
+**Workflow improvements:**
+
+- Recent Files menu for quickly reopening previous spectra.
+- Remembered last directory across Open and Export dialogs.
+- Improved status bar showing filename, point count, peak count, and analysis state.
+- Keyboard shortcuts for common actions such as Open, Analyze, Export PDF, and settings.
+
+**Analysis and GUI:**
+
+- FFT window selection is available directly in the analysis settings dialog.
+- Analysis parameters are controlled from the GUI, including sample rate, threshold, prominence, SNR, smoothing, baseline correction, and normalization.
+
+**Data handling and export:**
+
+- More robust CSV/TXT import for headers, UTF-8 BOM, delimiters, decimal comma data, and clearer error messages.
+- New report export formats: self-contained HTML and Excel workbook.
+
+**Testing:**
+
+- Pytest-based test discovery and configuration.
+- Synthetic spectrum test harness for deterministic regression tests.
 
 ## Highlights
 
@@ -45,8 +76,9 @@ after v0.1.
 - Detect peaks with threshold, prominence, distance, and SNR controls; calculate frequency, intensity, FWHM width in bins/Hz, Gaussian area, and SNR.
 - Inspect detected peaks in the plot and in a detailed analysis table.
 - Zoom into the spectrum with the mouse.
+- Reopen recent files, reuse the last working directory, and use workflow keyboard shortcuts.
 - Compare spectra against a local SQLite reference library.
-- Export detected peaks with analysis metadata to CSV and complete analysis results to PDF.
+- Export detected peaks with analysis metadata to CSV and complete analysis results to PDF, HTML, or Excel.
 - Use light and dark application themes.
 
 ## Screenshots
@@ -98,6 +130,13 @@ cd rust_module
 maturin develop
 cd ..
 
+chromatsvet
+```
+
+The installed console entry point is the recommended way to start the
+application. The historical direct script invocation is still supported:
+
+```bash
 python python_analyzer/main.py
 ```
 
@@ -137,14 +176,20 @@ sample rate is required to convert FFT bins into physical frequency values.
 2. Configure sample rate, filtering, spectrum smoothing, baseline correction, and peak-detection parameters.
 3. Run the analysis and inspect marked peaks on the frequency plot.
 4. Review peak frequency, intensity, width in bins/Hz, area, and SNR in the results table.
-5. Export the peak list as CSV or generate a PDF analysis report.
+5. Export the peak list as CSV or generate a PDF, HTML, or Excel analysis report.
 
 ## Development
+
+For development and tests, install the optional test dependencies:
+
+```bash
+python -m pip install -e ".[test]"
+```
 
 Run the Python test suite from the project root:
 
 ```bash
-QT_QPA_PLATFORM=offscreen python -m unittest discover -v
+QT_QPA_PLATFORM=offscreen python -m pytest -v
 ```
 
 Run the Rust unit tests:
@@ -154,7 +199,13 @@ cd rust_module
 cargo test
 ```
 
-Regenerate the v0.1 PNG screenshot set:
+Run the deterministic synthetic spectrum regression tests:
+
+```bash
+QT_QPA_PLATFORM=offscreen python -m pytest tests/unit/test_synthetic_peak_detection.py -v
+```
+
+Regenerate the v0.2 PNG screenshot set:
 
 ```bash
 QT_QPA_PLATFORM=offscreen python tools/capture_release_screenshots.py
@@ -171,10 +222,16 @@ python_analyzer/
   main.py                    Thin bootstrap and compatibility facade
   gui/main_window.py         MainWindow orchestration, state, exports
   gui/dialogs.py             Settings, analysis settings, and log dialogs
+  gui/error_messages.py      User-facing error message helpers
+  gui/recent_files.py        Recent Files and remembered directory helpers
   gui/theme.py               Qt palette and stylesheet helpers
   gui/log_view.py            Shared log-view formatting
   analysis/models.py         AnalysisSettings and LoadedSpectrum dataclasses
   analysis/runner.py         Filter -> Rust pipeline wrapper
+  analysis/windowing.py      FFT window names, labels, and validation
+  exporters/excel_report.py  Excel workbook export
+  exporters/html_report.py   Self-contained HTML report export
+  exporters/pdf_report.py    PDF report generation
   exporters/peak_csv.py      Detected peak CSV export
   readers/spectrum_reader.py CSV/TXT spectrum parsing
   viz/spectrum_plot.py       Spectrum plotting, frequency axis, peak markers
@@ -188,19 +245,39 @@ rust_module/src/
   signal/normalization.rs    Integral-area normalization
   signal/peak_detection.rs   Peak metrics and detection
   signal/window.rs           FFT window functions
+
+tests/
+  conftest.py                Shared pytest fixtures
+  support/synthetic_spectra.py
+                             Synthetic spectra and peak-matching test helpers
+  unit/                      Unit and focused regression tests
 ```
 
 Python owns file handling, the desktop UI, and reporting. Rust owns the numerical
 pipeline and returns the processed spectrum, frequency axis, and peak structures
 through PyO3.
 
-## v0.1 Scope
+## v0.2 Scope and Roadmap
 
-Version 0.1 is the first public release: the application can load data, perform
-an analysis, visualize and export its results, and preserve user settings. The
-next development priorities are richer peak-match diagnostics, cross-platform
-packaged builds, and a stronger reference-library workflow. The identification
-model is outlined in [Peak-Based Identification](docs/identification.md).
+Version 0.2 improves the daily workflow around the existing analysis foundation. The
+application can load data, tune analysis settings from the GUI, visualize and
+export results, preserve user settings, reopen recent files, and produce PDF,
+HTML, Excel, and peak CSV outputs.
+
+The next development priorities are richer peak-match diagnostics, stronger
+reference-library workflows, cross-platform packaged builds, and broader
+synthetic and real-world regression datasets. The identification model is
+outlined in [Peak-Based Identification](docs/identification.md).
+
+## Known Limitations
+
+ChromaTsvet is still **alpha** scientific software. It is useful for
+experiments, inspection, development, and educational purposes, but it is **not a
+certified laboratory instrument**.
+
+- Peak-based identification and reference-library workflows are still evolving.
+- There is no packaged distribution yet; the application is currently run from source.
+- Japanese documentation ([README.ja.md](README.ja.md)) may temporarily lag behind the English README.
 
 ## License
 

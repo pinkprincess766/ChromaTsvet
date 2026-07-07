@@ -45,6 +45,10 @@ test_*.csv
 test_*.txt
 *.log
 *.tmp
+testlibre/
+
+# Local/private engineering notes
+chroma_engineering_constitution.pdf
 
 # IDE and editor files
 .vscode/

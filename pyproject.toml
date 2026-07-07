@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "chromatsvet"
-version = "0.1.0"
+version = "0.2.0"
 description = "Desktop spectral and chromatographic data analysis with a Rust/PyO3 core."
 readme = "README.md"
 requires-python = ">=3.9"

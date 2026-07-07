@@ -1,31 +1,36 @@
-# ChromaTsvet v0.1.0
+# ChromaTsvet v0.2.0
 
-First public source release of ChromaTsvet.
+ChromaTsvet v0.2.0 is an alpha source release focused on everyday usability,
+clearer analysis state, richer exports, and stronger regression testing.
 
 ## Highlights
 
-- Clean modular architecture: `gui`, `viz`, `analysis`, and `readers`.
-- Rust/PyO3 signal-processing core with FFT, Savitzky-Golay filtering, baseline correction, area normalization, and peak detection.
-- PyQt5 desktop interface with light and dark themes.
-- Detected peak markers, peak table, mouse zoom, CSV peak export, and PDF report export.
-- Local SQLite reference library with first-run default data.
-- Release screenshots and deterministic screenshot regeneration script.
+- Added Recent Files and remembered last directory for faster repeated work.
+- Improved the status bar with source file, point count, peak count, and analysis state.
+- Added keyboard shortcuts for common workflow actions.
+- Added FFT window selection to the analysis settings UI.
+- Improved CSV/TXT import behavior and user-facing error messages.
+- Added HTML report export and Excel workbook export.
+- Added pytest configuration and a structured `tests/` layout.
+- Added a deterministic synthetic spectrum harness for peak-detection regression tests.
+- Updated English, Russian, and Japanese README documentation for v0.2.
 
-## Changes Since Early Development
+## Existing Analysis Capabilities
 
-- Removed automatic demo data on startup.
-- Added `pyproject.toml` and the `chromatsvet` entry point.
-- Added GitHub Actions CI for Python and Rust tests.
-- Added README assets, screenshots, and v0.1 release documentation.
-- Removed local SQLite and build artifacts from the tracked repository.
-- Refactored the original monolithic GUI into smaller modules.
+- Rust/PyO3 signal-processing core with FFT, Savitzky-Golay filtering, baseline correction, area normalization, spectrum smoothing, and peak detection.
+- Peak metrics including frequency, intensity, FWHM width, Gaussian area, and SNR.
+- Peak markers, peak table, mouse zoom, CSV peak export, PDF reports, HTML reports, and Excel workbooks.
+- Local SQLite reference library with peak-based identification and legacy cosine fallback.
 
 ## Status
 
-This is an alpha release intended for experiments, demonstrations, and further development. ChromaTsvet is not yet a validated laboratory instrument.
+This is still alpha scientific software. ChromaTsvet is useful for local
+experiments, inspection, demonstrations, and development, but it is not a
+validated laboratory instrument.
 
 ## Next Planned
 
-- Stronger peak-based identification.
-- Packaged binaries for Windows and macOS.
-- Richer reference-library management workflow.
+- Richer peak-match diagnostics.
+- Stronger reference-library management workflow.
+- Cross-platform packaged builds.
+- Broader synthetic and real-world regression datasets.
