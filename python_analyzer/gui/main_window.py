@@ -26,6 +26,7 @@ from PyQt5.QtCore import Qt, QSettings
 from PyQt5.QtGui import (QFont, QColor, QPalette, QFontDatabase, QKeySequence,
                          QPixmap, QTextCharFormat, QTextCursor)
 import pyqtgraph as pg
+import pyqtgraph.exporters as pg_exporters
 
 from paths import ensure_rust_in_path, get_library_db_path, get_project_root
 
@@ -463,6 +464,12 @@ class MainWindow(QMainWindow):
         self.export_excel_action = QAction("Export Excel Workbook", self)
         self.export_excel_action.setStatusTip("Export the current analysis as an Excel workbook")
         self.export_excel_action.triggered.connect(self.export_excel)
+        self.export_graph_png_action = QAction("Export Graph PNG", self)
+        self.export_graph_png_action.setStatusTip("Export the current spectrum graph as a PNG image")
+        self.export_graph_png_action.triggered.connect(self.export_graph_png)
+        self.export_graph_svg_action = QAction("Export Graph SVG", self)
+        self.export_graph_svg_action.setStatusTip("Export the current spectrum graph as an SVG image")
+        self.export_graph_svg_action.triggered.connect(self.export_graph_svg)
         self.export_peaks_action = self._create_workflow_action(
             "Export Peaks CSV",
             "export_peaks",
@@ -472,6 +479,9 @@ class MainWindow(QMainWindow):
         export_menu.addAction(self.export_pdf_action)
         export_menu.addAction(self.export_html_action)
         export_menu.addAction(self.export_excel_action)
+        export_menu.addSeparator()
+        export_menu.addAction(self.export_graph_png_action)
+        export_menu.addAction(self.export_graph_svg_action)
         export_menu.addSeparator()
         export_menu.addAction(self.export_peaks_action)
 
@@ -1481,6 +1491,82 @@ class MainWindow(QMainWindow):
                 status_message="Temporary report file could not be removed",
                 level="warning",
             )
+
+    def _path_with_default_suffix(self, file_path, suffix):
+        path = Path(file_path)
+        if not path.suffix:
+            return str(path.with_suffix(suffix))
+        return str(path)
+
+    def _export_graph_file(self, file_path, exporter_class):
+        QApplication.processEvents()
+        # Export the plot item itself instead of a widget screenshot, so the
+        # saved graph stays independent from toolbar/layout chrome.
+        exporter = exporter_class(self.plot.getPlotItem())
+        exporter.export(file_path)
+
+    def _export_graph_image(self, *, format_name, suffix, file_filter, exporter_class):
+        if not self.current_result:
+            self._show_warning(
+                "No analysis results",
+                "Analyze a spectrum before exporting the graph.",
+                status_message="No analysis results to export",
+            )
+            return
+
+        file, _ = QFileDialog.getSaveFileName(
+            self,
+            f"Save graph as {format_name}",
+            suggested_dialog_path(
+                self.settings,
+                f"graph_{datetime.now():%Y%m%d_%H%M}{suffix}",
+            ),
+            file_filter,
+        )
+        if not file:
+            return
+
+        output_file = self._path_with_default_suffix(file, suffix)
+        try:
+            self._export_graph_file(output_file, exporter_class)
+
+            QMessageBox.information(self, "Success", f"Graph saved:\n{output_file}")
+            remember_last_directory(self.settings, output_file)
+            self.log(
+                f"Graph {format_name} exported: {display_file_label(output_file)}",
+                status_message=f"Graph {format_name} saved: {Path(output_file).name}",
+            )
+        except PermissionError as exc:
+            self._show_error(
+                "Could not save graph",
+                "The graph could not be saved because access to the selected location was denied.",
+                exception=exc,
+                status_message="Graph was not saved",
+            )
+        except Exception as exc:
+            self._show_error(
+                "Could not export graph",
+                "The graph could not be exported. Choose another location and try again.",
+                exception=exc,
+                critical=True,
+                status_message="Graph export failed",
+            )
+
+    def export_graph_png(self):
+        self._export_graph_image(
+            format_name="PNG",
+            suffix=".png",
+            file_filter="PNG Image (*.png)",
+            exporter_class=pg_exporters.ImageExporter,
+        )
+
+    def export_graph_svg(self):
+        self._export_graph_image(
+            format_name="SVG",
+            suffix=".svg",
+            file_filter="SVG Image (*.svg)",
+            exporter_class=pg_exporters.SVGExporter,
+        )
 
     def export_pdf(self):
         if not self.current_result:
