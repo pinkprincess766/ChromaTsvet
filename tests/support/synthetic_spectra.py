@@ -114,6 +114,119 @@ class PeakMatchMetrics:
         }
 
 
+@dataclass(frozen=True)
+class PeakDetectionQualityCase:
+    """Synthetic case plus explicit release-quality thresholds."""
+
+    name: str
+    case: SyntheticSpectrumCase
+    process_kwargs: dict[str, Any]
+    min_precision: float
+    min_recall: float
+    min_f1: float
+    max_false_positives: int
+    max_rmse_hz: float | None = None
+    frequency_tolerance_hz: float | None = None
+
+
+@dataclass(frozen=True)
+class PeakDetectionQualityEvaluation:
+    """Measured result for one quality-benchmark case."""
+
+    quality_case: PeakDetectionQualityCase
+    result: dict[str, Any]
+    metrics: PeakMatchMetrics
+    detected_frequencies: tuple[float, ...]
+
+    @property
+    def passed(self) -> bool:
+        rmse_limit = self.quality_case.max_rmse_hz
+        return (
+            self.metrics.precision >= self.quality_case.min_precision
+            and self.metrics.recall >= self.quality_case.min_recall
+            and self.metrics.f1 >= self.quality_case.min_f1
+            and self.metrics.fp <= self.quality_case.max_false_positives
+            and (rmse_limit is None or self.metrics.rmse_hz <= rmse_limit)
+        )
+
+    def as_dict(self) -> dict[str, Any]:
+        data = self.metrics.as_dict()
+        data.update(
+            {
+                "name": self.quality_case.name,
+                "description": self.quality_case.case.description,
+                "passed": self.passed,
+                "min_precision": self.quality_case.min_precision,
+                "min_recall": self.quality_case.min_recall,
+                "min_f1": self.quality_case.min_f1,
+                "max_false_positives": self.quality_case.max_false_positives,
+                "max_rmse_hz": self.quality_case.max_rmse_hz,
+            }
+        )
+        return data
+
+
+@dataclass(frozen=True)
+class PeakDetectionQualitySuite:
+    """Aggregate benchmark metrics across deterministic synthetic cases."""
+
+    evaluations: tuple[PeakDetectionQualityEvaluation, ...]
+
+    @property
+    def tp(self) -> int:
+        return sum(evaluation.metrics.tp for evaluation in self.evaluations)
+
+    @property
+    def fp(self) -> int:
+        return sum(evaluation.metrics.fp for evaluation in self.evaluations)
+
+    @property
+    def fn(self) -> int:
+        return sum(evaluation.metrics.fn for evaluation in self.evaluations)
+
+    @property
+    def precision(self) -> float:
+        denominator = self.tp + self.fp
+        return self.tp / denominator if denominator else 0.0
+
+    @property
+    def recall(self) -> float:
+        denominator = self.tp + self.fn
+        return self.tp / denominator if denominator else 0.0
+
+    @property
+    def f1(self) -> float:
+        return (
+            2.0 * self.precision * self.recall / (self.precision + self.recall)
+            if self.precision + self.recall
+            else 0.0
+        )
+
+    @property
+    def max_rmse_hz(self) -> float:
+        if not self.evaluations:
+            return 0.0
+        return max(evaluation.metrics.rmse_hz for evaluation in self.evaluations)
+
+    @property
+    def failed_cases(self) -> tuple[PeakDetectionQualityEvaluation, ...]:
+        return tuple(evaluation for evaluation in self.evaluations if not evaluation.passed)
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "precision": round(self.precision, 4),
+            "recall": round(self.recall, 4),
+            "f1": round(self.f1, 4),
+            "tp": self.tp,
+            "fp": self.fp,
+            "fn": self.fn,
+            "max_rmse_hz": round(self.max_rmse_hz, 6),
+            "case_count": len(self.evaluations),
+            "failed_cases": [evaluation.as_dict() for evaluation in self.failed_cases],
+            "cases": [evaluation.as_dict() for evaluation in self.evaluations],
+        }
+
+
 def validate_frequencies_below_nyquist(
     frequencies: list[float] | tuple[float, ...],
     sample_rate: float,
@@ -290,6 +403,22 @@ def spiky_artifacts_case() -> SyntheticSpectrumCase:
     )
 
 
+def fractional_bin_case() -> SyntheticSpectrumCase:
+    return create_synthetic_case(
+        [128.25],
+        description="single tone halfway between FFT bins",
+    )
+
+
+def high_sample_rate_case() -> SyntheticSpectrumCase:
+    return create_synthetic_case(
+        [640.0],
+        sample_rate=4096.0,
+        duration=1.0,
+        description="single tone with high sample rate",
+    )
+
+
 def hostile_nan_case() -> SyntheticSpectrumCase:
     case = create_synthetic_case([128.0], description="hostile input with NaN segment")
     signal = case.signal.copy()
@@ -445,7 +574,35 @@ def evaluate_case(
         "description": case.description,
         "result": result,
         "metrics": metrics.as_dict(),
+        "metrics_object": metrics,
         "detected_frequencies": [round(frequency, 6) for frequency in detected_frequencies],
         "expected_frequencies": case.expected_frequencies,
         "tolerance_used_hz": tolerance_hz,
     }
+
+
+def evaluate_quality_suite(
+    quality_cases: list[PeakDetectionQualityCase] | tuple[PeakDetectionQualityCase, ...],
+    process_signal: Callable[..., dict[str, Any]],
+) -> PeakDetectionQualitySuite:
+    evaluations: list[PeakDetectionQualityEvaluation] = []
+    for quality_case in quality_cases:
+        evaluated = evaluate_case(
+            quality_case.case,
+            process_signal,
+            frequency_tolerance_hz=quality_case.frequency_tolerance_hz,
+            **quality_case.process_kwargs,
+        )
+        metrics = evaluated["metrics_object"]
+        if not isinstance(metrics, PeakMatchMetrics):
+            raise TypeError("evaluate_case returned unexpected metrics object")
+        evaluations.append(
+            PeakDetectionQualityEvaluation(
+                quality_case=quality_case,
+                result=evaluated["result"],
+                metrics=metrics,
+                detected_frequencies=tuple(evaluated["detected_frequencies"]),
+            )
+        )
+
+    return PeakDetectionQualitySuite(evaluations=tuple(evaluations))
