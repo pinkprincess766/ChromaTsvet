@@ -79,6 +79,7 @@ repetitive.
 - Reopen recent files, reuse the last working directory, and use workflow keyboard shortcuts.
 - Compare spectra against a local SQLite reference library.
 - Export detected peaks with analysis metadata to CSV and complete analysis results to PDF, HTML, or Excel.
+- Export the current spectrum graph as PNG or SVG.
 - Use light and dark application themes.
 
 ## Screenshots

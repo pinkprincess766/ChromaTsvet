@@ -18,6 +18,7 @@ Python/PyQt による UI と Rust/PyO3 による信号処理コアを組み合�
 - SQLite 参照ライブラリとの簡易比較
 - ピーク CSV エクスポート
 - PDF / HTML / Excel レポート出力
+- グラフの PNG / SVG エクスポート
 - light / dark theme
 
 ## ソースからの起動

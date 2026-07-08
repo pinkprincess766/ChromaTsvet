@@ -48,6 +48,16 @@ class FakeIdentifier:
         return True
 
 
+class FakeGraphExporter:
+    payload = b"graph-export"
+
+    def __init__(self, plot_item):
+        self.plot_item = plot_item
+
+    def export(self, file_path):
+        Path(file_path).write_bytes(self.payload)
+
+
 class MainWindowErrorHandlingTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -412,6 +422,70 @@ class MainWindowErrorHandlingTest(unittest.TestCase):
         self.assertEqual(workbook["Summary"]["A5"].value, "Source file")
         self.assertEqual(workbook["Summary"]["B5"].value, "In-memory data")
         self.assertIn("Excel workbook created:", self.window.log_history[-1])
+
+    def test_graph_png_export_writes_image_and_remembers_directory(self):
+        self.window.run_analysis()
+
+        with TemporaryDirectory() as temp_dir:
+            output_path_without_suffix = Path(temp_dir) / "spectrum_graph"
+            expected_output_path = output_path_without_suffix.with_suffix(".png")
+            with (
+                patch.object(
+                    main.QFileDialog,
+                    "getSaveFileName",
+                    return_value=(str(output_path_without_suffix), "PNG Image (*.png)"),
+                ),
+                patch(
+                    "python_analyzer.gui.main_window.pg_exporters.ImageExporter",
+                    FakeGraphExporter,
+                ),
+                patch.object(QMessageBox, "information", return_value=QMessageBox.Ok),
+            ):
+                self.window.export_graph_png()
+
+            self.assertTrue(expected_output_path.is_file())
+            self.assertEqual(expected_output_path.read_bytes(), FakeGraphExporter.payload)
+            self.assertEqual(load_last_directory(self.window.settings), temp_dir)
+            self.assertIn("Graph PNG exported: spectrum_graph.png", self.window.log_history[-1])
+            self.assertNotIn(temp_dir, self.window.log_history[-1])
+
+    def test_graph_svg_export_writes_image_and_updates_log(self):
+        self.window.run_analysis()
+
+        with TemporaryDirectory() as temp_dir:
+            output_path = Path(temp_dir) / "spectrum_graph.svg"
+            with (
+                patch.object(
+                    main.QFileDialog,
+                    "getSaveFileName",
+                    return_value=(str(output_path), "SVG Image (*.svg)"),
+                ),
+                patch(
+                    "python_analyzer.gui.main_window.pg_exporters.SVGExporter",
+                    FakeGraphExporter,
+                ),
+                patch.object(QMessageBox, "information", return_value=QMessageBox.Ok),
+            ):
+                self.window.export_graph_svg()
+
+            self.assertTrue(output_path.is_file())
+            self.assertEqual(output_path.read_bytes(), FakeGraphExporter.payload)
+            self.assertEqual(load_last_directory(self.window.settings), temp_dir)
+            self.assertIn("Graph SVG exported: spectrum_graph.svg", self.window.log_history[-1])
+            self.assertNotIn(temp_dir, self.window.log_history[-1])
+
+    def test_graph_export_is_disabled_without_analysis_results(self):
+        self.assertIsNone(self.window.current_result)
+
+        with (
+            patch.object(main.QFileDialog, "getSaveFileName") as save_dialog,
+            patch.object(QMessageBox, "warning", return_value=QMessageBox.Ok) as warning,
+        ):
+            self.window.export_graph_png()
+
+        warning.assert_called_once()
+        save_dialog.assert_not_called()
+        self.assertIn("[WARN]", self.window.log_history[-1])
 
     def test_peak_export_is_disabled_without_detected_peaks(self):
         self.assertFalse(self.window.btn_export_peaks.isEnabled())
