@@ -73,6 +73,7 @@ from python_analyzer.gui.recent_files import (
     remember_last_directory,
     suggested_dialog_path,
 )
+from python_analyzer.gui.reference_library import ReferenceLibraryDialog
 from python_analyzer.gui.theme import FONT_CANDIDATES, apply_app_theme
 
 # Top level constants and functions needed (copied from original for self contained)
@@ -195,6 +196,14 @@ class MainWindow(QMainWindow):
         self.current_file_name = None
         self.current_file_path = None
         self.current_spectrum: LoadedSpectrum | None = None
+        self.current_frequency_axis = None
+        self.current_spectrum_values = None
+        self.overlay_data = None
+        self.overlay_result = None
+        self.overlay_file_name = None
+        self.overlay_file_path = None
+        self.overlay_frequency_axis = None
+        self.overlay_spectrum_values = None
         self.analysis_status = "idle"
         self.log_history = []
         self.log_window = None
@@ -276,8 +285,10 @@ class MainWindow(QMainWindow):
         btn_layout = QHBoxLayout()
         btn_layout.setSpacing(6)
         self.btn_open = QPushButton("Open file")
+        self.btn_overlay = QPushButton("Overlay")
         self.btn_run = QPushButton("Analyze")
         self.btn_add = QPushButton("➕ Add")
+        self.btn_library = QPushButton("Library")
         self.btn_restore = QPushButton("♻ Restore library")
         self.btn_export = QPushButton("📄 PDF Report")
         self.btn_export_peaks = QPushButton("Export Peaks (CSV)")
@@ -303,8 +314,10 @@ class MainWindow(QMainWindow):
             )
 
         self.btn_open.clicked.connect(self.load_file)
+        self.btn_overlay.clicked.connect(self.load_overlay_file)
         self.btn_run.clicked.connect(self.run_analysis)
         self.btn_add.clicked.connect(self.add_substance)
+        self.btn_library.clicked.connect(self.open_reference_library)
         self.btn_restore.clicked.connect(self.restore_database)
         self.btn_export.clicked.connect(self.export_pdf)
         self.btn_export_peaks.clicked.connect(self.export_peaks_csv)
@@ -315,6 +328,7 @@ class MainWindow(QMainWindow):
         self._create_menus()
 
         btn_layout.addWidget(self.btn_open)
+        btn_layout.addWidget(self.btn_overlay)
         self.file_label = QLabel()
         self.file_label.setObjectName("fileLabel")
         self.file_label.setMinimumWidth(220)
@@ -323,6 +337,7 @@ class MainWindow(QMainWindow):
         btn_layout.addWidget(self.file_label)
         btn_layout.addWidget(self.btn_run)
         btn_layout.addWidget(self.btn_add)
+        btn_layout.addWidget(self.btn_library)
         btn_layout.addWidget(self.btn_restore)
         btn_layout.addWidget(self.btn_export)
         btn_layout.addWidget(self.btn_export_peaks)
@@ -431,6 +446,15 @@ class MainWindow(QMainWindow):
         )
         file_menu.addAction(self.open_file_action)
 
+        self.load_overlay_action = QAction("Load Overlay Spectrum...", self)
+        self.load_overlay_action.setStatusTip("Load a second spectrum and overlay it on the current graph")
+        self.load_overlay_action.triggered.connect(self.load_overlay_file)
+        self.clear_overlay_action = QAction("Clear Overlay Spectrum", self)
+        self.clear_overlay_action.setStatusTip("Remove the overlay spectrum from the current graph")
+        self.clear_overlay_action.triggered.connect(self.clear_overlay_spectrum)
+        file_menu.addAction(self.load_overlay_action)
+        file_menu.addAction(self.clear_overlay_action)
+
         self.recent_files_menu = file_menu.addMenu("Recent Files")
         self.recent_files_menu.aboutToShow.connect(self._refresh_recent_files_menu)
         self._refresh_recent_files_menu()
@@ -450,6 +474,12 @@ class MainWindow(QMainWindow):
         )
         analysis_menu.addAction(self.run_analysis_action)
         analysis_menu.addAction(self.analysis_settings_action)
+
+        library_menu = self.menuBar().addMenu("&Library")
+        self.manage_library_action = QAction("Manage Reference Library...", self)
+        self.manage_library_action.setStatusTip("Inspect and maintain reference library entries")
+        self.manage_library_action.triggered.connect(self.open_reference_library)
+        library_menu.addAction(self.manage_library_action)
 
         export_menu = self.menuBar().addMenu("&Export")
         self.export_pdf_action = self._create_workflow_action(
@@ -503,6 +533,7 @@ class MainWindow(QMainWindow):
         self.btn_open.setToolTip(
             f"Open a spectrum file ({self._workflow_shortcut_text('open_file')})"
         )
+        self.btn_overlay.setToolTip("Overlay a second spectrum on the current graph")
         self.btn_run.setToolTip(
             f"Run analysis ({self._workflow_shortcut_text('run_analysis')})"
         )
@@ -512,6 +543,7 @@ class MainWindow(QMainWindow):
         self.btn_export_peaks.setToolTip(
             f"Export detected peaks ({self._workflow_shortcut_text('export_peaks')})"
         )
+        self.btn_library.setToolTip("Inspect and maintain reference library entries")
         self.btn_analysis_settings.setToolTip(
             f"Analysis settings ({self._workflow_shortcut_text('analysis_settings')})"
         )
@@ -521,6 +553,12 @@ class MainWindow(QMainWindow):
 
     def open_analysis_settings(self):
         AnalysisSettingsDialog(self).exec()
+
+    def open_reference_library(self):
+        dialog = ReferenceLibraryDialog(self, self.identifier)
+        dialog.exec()
+        if dialog.changed and self.current_data is not None:
+            self.run_analysis()
 
     def open_log(self):
         if self.log_window is None:
@@ -899,16 +937,21 @@ class MainWindow(QMainWindow):
             else []
         )
         peak_count = len(peaks)
+        overlay_suffix = (
+            f" | overlay: {self.overlay_file_name}"
+            if self.overlay_data is not None and self.overlay_file_name
+            else ""
+        )
 
         if self.current_data is None:
             status_text = "No data | idle"
         elif self.current_result is not None:
             status_text = (
                 f"{point_count} points | {peak_count} peaks | analyzed | "
-                f"threshold={self.peak_threshold:.3f}"
+                f"threshold={self.peak_threshold:.3f}{overlay_suffix}"
             )
         else:
-            status_text = f"{point_count} points | {self.analysis_status}"
+            status_text = f"{point_count} points | {self.analysis_status}{overlay_suffix}"
 
         self.status_details_label.setText(status_text)
         self.status_details_label.setToolTip(self._analysis_settings_tooltip())
@@ -942,8 +985,13 @@ class MainWindow(QMainWindow):
             else []
         )
         self.btn_export_peaks.setEnabled(bool(peaks))
+        self.btn_overlay.setEnabled(self.current_result is not None)
         if hasattr(self, "export_peaks_action"):
             self.export_peaks_action.setEnabled(bool(peaks))
+        if hasattr(self, "load_overlay_action"):
+            self.load_overlay_action.setEnabled(self.current_result is not None)
+        if hasattr(self, "clear_overlay_action"):
+            self.clear_overlay_action.setEnabled(self.overlay_data is not None)
 
     def _update_result_tab_titles(self, peak_count, match_count):
         self.results_tabs.setTabText(0, f"Detected Peaks ({peak_count})")
@@ -1053,7 +1101,7 @@ class MainWindow(QMainWindow):
 
         self._load_spectrum_file(Path(file))
 
-    def _load_spectrum_file(self, file_path):
+    def _read_spectrum_file_for_ui(self, file_path, *, role="spectrum"):
         file_label = display_file_label(file_path)
         try:
             if file_path.stat().st_size == 0:
@@ -1103,7 +1151,7 @@ class MainWindow(QMainWindow):
                 ),
                 status_message="No numeric spectrum data found",
             )
-            return
+            return None
 
         if skipped_rows:
             examples = "\n".join(
@@ -1121,11 +1169,21 @@ class MainWindow(QMainWindow):
                 status_message=f"Loaded with {len(skipped_rows)} skipped rows",
             )
 
+        return data
+
+    def _load_spectrum_file(self, file_path):
+        data = self._read_spectrum_file_for_ui(file_path)
+        if data is None:
+            return
+
         self.current_data = data
         self.current_file_name = file_path.name
         self.current_file_path = str(file_path.resolve())
         self.current_result = None
         self.current_peaks = []
+        self.current_frequency_axis = None
+        self.current_spectrum_values = None
+        self._reset_overlay_state()
         self.analysis_status = "loaded"
 
         self.current_spectrum = LoadedSpectrum(
@@ -1141,6 +1199,74 @@ class MainWindow(QMainWindow):
             status_message=f"Loaded: {self.current_file_name}",
         )
         self.run_analysis()
+
+    def _reset_overlay_state(self):
+        self.overlay_data = None
+        self.overlay_file_name = None
+        self.overlay_file_path = None
+        self.overlay_result = None
+        self.overlay_frequency_axis = None
+        self.overlay_spectrum_values = None
+
+    def load_overlay_file(self):
+        if self.current_result is None:
+            self._show_warning(
+                "Analyze primary spectrum first",
+                "Load and analyze a primary spectrum before adding an overlay.",
+                log_message="Overlay spectrum requested before a primary analysis exists",
+                status_message="Analyze primary spectrum first",
+            )
+            return
+
+        file, _ = QFileDialog.getOpenFileName(
+            self,
+            "Open overlay spectrum",
+            load_last_directory(self.settings),
+            "CSV (*.csv);;TXT (*.txt)",
+        )
+        if not file:
+            return
+
+        self._load_overlay_spectrum_file(Path(file))
+
+    def _load_overlay_spectrum_file(self, file_path):
+        data = self._read_spectrum_file_for_ui(file_path, role="overlay")
+        if data is None:
+            return
+
+        self.overlay_data = data
+        self.overlay_file_name = file_path.name
+        self.overlay_file_path = str(file_path.resolve())
+        self.overlay_result = None
+        self.overlay_frequency_axis = None
+        self.overlay_spectrum_values = None
+
+        remember_last_directory(self.settings, file_path)
+        if not self._analyze_overlay_spectrum():
+            return
+
+        self._redraw_current_plot()
+        self._update_status_summary()
+        self._update_export_actions()
+        self.log(
+            f"Overlay loaded: {self.overlay_file_name} ({len(data)} points)",
+            status_message=f"Overlay loaded: {self.overlay_file_name}",
+        )
+
+    def clear_overlay_spectrum(self):
+        if self.overlay_data is None:
+            self.status_bar.showMessage("No overlay spectrum loaded")
+            return
+
+        overlay_name = self.overlay_file_name or "overlay spectrum"
+        self._reset_overlay_state()
+        self._redraw_current_plot()
+        self._update_status_summary()
+        self._update_export_actions()
+        self.log(
+            f"Overlay removed: {overlay_name}",
+            status_message="Overlay spectrum removed",
+        )
 
     def run_analysis(self):
         if self.current_data is None:
@@ -1193,6 +1319,8 @@ class MainWindow(QMainWindow):
             )
             peaks = result.get("peaks", [])
             self.current_peaks = peaks  # store for adding references with peak data
+            self.current_frequency_axis = frequency_axis
+            self.current_spectrum_values = spectrum
 
             # Prefer peak-based matching if peaks are available
             if peaks:
@@ -1223,18 +1351,13 @@ class MainWindow(QMainWindow):
             else:
                 matches = self.identifier.find_matches(spectrum)
 
-            self.spectrum_plot.clear()
-            plot_title = (
-                f"Spectrum — {self.current_file_name}"
-                if self.current_file_name
-                else "Spectrum"
-            )
-            self.spectrum_plot.set_title(plot_title)
-            self.spectrum_plot.plot_spectrum(frequency_axis, spectrum)
-            self.spectrum_plot.add_peak_markers(peaks)
             self._set_peak_table(peaks)
             self._set_match_table(matches)
             self._update_result_tab_titles(len(peaks), len(matches))
+            self.current_result = result
+            if self.overlay_data is not None:
+                self._analyze_overlay_spectrum()
+            self._redraw_current_plot()
         except Exception as exc:
             self.analysis_status = "analysis failed"
             self._update_status_summary()
@@ -1247,7 +1370,6 @@ class MainWindow(QMainWindow):
             )
             return
 
-        self.current_result = result
         self.analysis_status = "analyzed"
         self._update_export_actions()
         self._update_status_summary()
@@ -1257,6 +1379,84 @@ class MainWindow(QMainWindow):
             f"Analysis done. Peaks: {len(peaks)} | Matches: {len(matches)}",
             status_message=f"{source_name} | Analysis done. Peaks: {len(peaks)}",
         )
+
+    def _analyze_overlay_spectrum(self):
+        if self.overlay_data is None:
+            return True
+
+        try:
+            result = run_analysis_pipeline(
+                self.overlay_data,
+                self.analysis_settings,
+            )
+            spectrum = np.asarray(result.get("spectrum", []), dtype=float)
+            frequency_axis = self.spectrum_plot.frequency_axis(
+                result,
+                len(spectrum),
+                sample_rate=self.sample_rate,
+                source_signal_len=len(self.overlay_data),
+            )
+        except filters.FilterError as exc:
+            self.overlay_result = None
+            self.overlay_frequency_axis = None
+            self.overlay_spectrum_values = None
+            self._show_error(
+                "Overlay filtering error",
+                "The overlay spectrum could not be filtered with the current settings.",
+                exception=exc,
+                status_message="Overlay filtering failed",
+            )
+            return False
+        except Exception as exc:
+            self.overlay_result = None
+            self.overlay_frequency_axis = None
+            self.overlay_spectrum_values = None
+            self._show_error(
+                "Overlay analysis error",
+                "The overlay spectrum could not be analyzed with the current settings.",
+                exception=exc,
+                status_message="Overlay analysis failed",
+            )
+            return False
+
+        self.overlay_result = result
+        self.overlay_frequency_axis = frequency_axis
+        self.overlay_spectrum_values = spectrum
+        return True
+
+    def _redraw_current_plot(self):
+        if self.current_frequency_axis is None or self.current_spectrum_values is None:
+            return
+
+        self.spectrum_plot.clear()
+        has_overlay = (
+            self.overlay_frequency_axis is not None
+            and self.overlay_spectrum_values is not None
+        )
+        plot_title = (
+            f"Spectrum overlay — {self.current_file_name}"
+            if has_overlay and self.current_file_name
+            else f"Spectrum — {self.current_file_name}"
+            if self.current_file_name
+            else "Spectrum"
+        )
+        self.spectrum_plot.set_title(plot_title)
+
+        primary_label = self.current_file_name if has_overlay else None
+        self.spectrum_plot.plot_spectrum(
+            self.current_frequency_axis,
+            self.current_spectrum_values,
+            name=primary_label,
+        )
+
+        if has_overlay:
+            self.spectrum_plot.plot_overlay_spectrum(
+                self.overlay_frequency_axis,
+                self.overlay_spectrum_values,
+                self.overlay_file_name or "Overlay",
+            )
+
+        self.spectrum_plot.add_peak_markers(self.current_peaks)
 
     def add_substance(self):
         name, ok = QInputDialog.getText(self, "New substance", "Name:")

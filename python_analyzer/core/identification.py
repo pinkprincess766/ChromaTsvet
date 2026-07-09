@@ -61,6 +61,20 @@ class MatchResult:
         """Backward-compatible alias for the pre-v0.1 field name."""
         return self.compared_points
 
+
+@dataclass(frozen=True)
+class ReferenceLibraryEntry:
+    """Small UI-safe summary of one reference library row."""
+
+    reference_id: int
+    name: str
+    formula: str
+    data_type: str
+    schema_version: int
+    spectrum_points: int
+    peak_count: int
+
+
 class SpectrumIdentifier:
     def __init__(self, db_path=None):
         if db_path is None:
@@ -225,6 +239,62 @@ class SpectrumIdentifier:
             return True
         except Exception as exc:
             logger.error("Could not clear the reference database (%s)", type(exc).__name__)
+            return False
+
+    def list_references(self) -> list[ReferenceLibraryEntry]:
+        """Return reference-library rows without exposing database paths."""
+        cursor = self.conn.execute(
+            """
+            SELECT id, name, formula, spectrum, peaks_json, schema_version, data_type
+            FROM compounds
+            ORDER BY lower(name), id
+            """
+        )
+        entries: list[ReferenceLibraryEntry] = []
+        for row in cursor.fetchall():
+            (
+                reference_id,
+                name,
+                formula,
+                spectrum_json,
+                peaks_json,
+                schema_version,
+                data_type,
+            ) = row
+            entries.append(
+                ReferenceLibraryEntry(
+                    reference_id=int(reference_id),
+                    name=str(name or ""),
+                    formula=str(formula or ""),
+                    data_type=normalize_data_type(data_type),
+                    schema_version=_safe_int(schema_version, default=1),
+                    spectrum_points=_json_list_length(spectrum_json),
+                    peak_count=_json_list_length(peaks_json),
+                )
+            )
+        return entries
+
+    def delete_reference(self, reference_id: int) -> bool:
+        """Delete one reference row by database id."""
+        try:
+            normalized_id = int(reference_id)
+            if normalized_id <= 0:
+                raise ValueError("reference id must be positive")
+            cursor = self.conn.execute(
+                "DELETE FROM compounds WHERE id = ?",
+                (normalized_id,),
+            )
+            self.conn.commit()
+            deleted = cursor.rowcount > 0
+            if deleted:
+                logger.info("Deleted reference substance id=%s", normalized_id)
+            return deleted
+        except Exception as exc:
+            logger.error(
+                "Could not delete reference substance id=%r (%s)",
+                reference_id,
+                type(exc).__name__,
+            )
             return False
 
     def restore_default(self):
@@ -416,6 +486,23 @@ def _finite_float(value: object, default: float | None = None) -> float | None:
     except (TypeError, ValueError):
         return default
     return number if math.isfinite(number) else default
+
+
+def _safe_int(value: object, default: int = 0) -> int:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _json_list_length(payload: object) -> int:
+    if not payload:
+        return 0
+    try:
+        value = json.loads(str(payload))
+    except (TypeError, json.JSONDecodeError):
+        return 0
+    return len(value) if isinstance(value, list) else 0
 
 
 def _safe_path_label(path: Path) -> str:

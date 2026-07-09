@@ -47,6 +47,12 @@ class FakeIdentifier:
     def restore_default(self):
         return True
 
+    def list_references(self):
+        return []
+
+    def delete_reference(self, reference_id):
+        return True
+
 
 class FakeGraphExporter:
     payload = b"graph-export"
@@ -245,6 +251,43 @@ class MainWindowErrorHandlingTest(unittest.TestCase):
                 self.window.load_file()
 
             self.assertEqual(open_dialog.call_args.args[2], temp_dir)
+
+    def test_overlay_file_is_analyzed_and_can_be_cleared(self):
+        primary_result = {
+            "spectrum": [1.0, 2.0],
+            "frequency_axis": [0.0, 250.0],
+            "sample_rate": 1000.0,
+            "peaks": [],
+        }
+        overlay_result = {
+            "spectrum": [0.5, 1.5],
+            "frequency_axis": [0.0, 250.0],
+            "sample_rate": 1000.0,
+            "peaks": [],
+        }
+        self.process_signal.side_effect = [primary_result, overlay_result]
+        self.window.run_analysis()
+
+        with TemporaryDirectory() as temp_dir:
+            overlay_path = Path(temp_dir) / "overlay.csv"
+            overlay_path.write_text("intensity\n0.2\n0.6\n0.4\n0.1\n", encoding="utf-8")
+
+            with patch.object(
+                main.QFileDialog,
+                "getOpenFileName",
+                return_value=(str(overlay_path), "CSV (*.csv)"),
+            ):
+                self.window.load_overlay_file()
+
+        self.assertEqual(self.window.overlay_file_name, "overlay.csv")
+        self.assertEqual(self.window.overlay_spectrum_values.tolist(), [0.5, 1.5])
+        self.assertIn("overlay: overlay.csv", self.window.status_details_label.text())
+        self.assertTrue(self.window.clear_overlay_action.isEnabled())
+
+        self.window.clear_overlay_spectrum()
+
+        self.assertIsNone(self.window.overlay_data)
+        self.assertNotIn("overlay:", self.window.status_details_label.text())
 
     def test_missing_recent_file_is_removed_without_path_leak(self):
         with TemporaryDirectory() as temp_dir:
@@ -970,6 +1013,48 @@ class IdentifierErrorPropagationTest(unittest.TestCase):
         self.assertEqual(json.loads(row[1])[0]["width_hz"], 20.0)
         self.assertEqual(len(matches), 1)
         self.assertEqual(matches[0].num_matched, 1)
+
+    def test_reference_library_lists_counts_and_deletes_entries(self):
+        identifier = SpectrumIdentifier(":memory:")
+        try:
+            identifier.add_reference("Legacy", [1.0, 2.0, 3.0], "L")
+            identifier.add_reference(
+                "PeakOnly",
+                None,
+                "P",
+                peaks=[ReferencePeak(frequency=100.0, intensity=1.0)],
+                data_type="raman",
+            )
+            identifier.conn.execute(
+                """
+                INSERT INTO compounds
+                (name, formula, spectrum, peaks_json, schema_version, data_type)
+                VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                ("Broken", "B", "{not-json", "{not-json", 2, "unknown"),
+            )
+            identifier.conn.commit()
+
+            entries = identifier.list_references()
+            by_name = {entry.name: entry for entry in entries}
+
+            self.assertEqual(by_name["Legacy"].spectrum_points, 3)
+            self.assertEqual(by_name["Legacy"].peak_count, 0)
+            self.assertEqual(by_name["PeakOnly"].spectrum_points, 0)
+            self.assertEqual(by_name["PeakOnly"].peak_count, 1)
+            self.assertEqual(by_name["PeakOnly"].data_type, "raman")
+            self.assertEqual(by_name["Broken"].spectrum_points, 0)
+            self.assertEqual(by_name["Broken"].peak_count, 0)
+            self.assertEqual(by_name["Broken"].data_type, "generic")
+
+            self.assertTrue(identifier.delete_reference(by_name["Legacy"].reference_id))
+            self.assertFalse(identifier.delete_reference(by_name["Legacy"].reference_id))
+            remaining_names = {entry.name for entry in identifier.list_references()}
+        finally:
+            identifier.conn.close()
+
+        self.assertNotIn("Legacy", remaining_names)
+        self.assertIn("PeakOnly", remaining_names)
 
     def test_peak_matching_filters_by_data_type_with_generic_fallback(self):
         identifier = SpectrumIdentifier(":memory:")

@@ -18,6 +18,7 @@ class SpectrumPlot:
         self.theme = "dark"
         self.font_family = "Inter"
         self.font_size = 12
+        self.legend = None
 
     def configure(self, theme: str, font_family: str, font_size: int) -> None:
         self.theme = theme
@@ -63,6 +64,7 @@ class SpectrumPlot:
                 "muted": "#5A6472",
                 "text": "#1F232B",
                 "spectrum": "#0A84FF",
+                "overlay": "#B26400",
                 "peak": "#D43F3A",
                 "peak_border": "#8E1F1C",
             }
@@ -74,16 +76,43 @@ class SpectrumPlot:
             "muted": "#B8C0CC",
             "text": "#E8EAED",
             "spectrum": "#4DA3FF",
+            "overlay": "#FFD166",
             "peak": "#FF6B6B",
             "peak_border": "#C0392B",
         }
 
-    def plot_spectrum(self, frequency_axis: np.ndarray, spectrum: np.ndarray) -> None:
+    def plot_spectrum(
+        self,
+        frequency_axis: np.ndarray,
+        spectrum: np.ndarray,
+        *,
+        name: str | None = None,
+        color_key: str = "spectrum",
+        width: float = 2.6,
+    ) -> None:
         colors = self.colors()
+        color = colors.get(color_key, colors["spectrum"])
+        if name:
+            self._ensure_legend()
         self.plot.plot(
             frequency_axis,
             spectrum,
-            pen=pg.mkPen(colors["spectrum"], width=2.6),
+            pen=pg.mkPen(color, width=width),
+            name=name,
+        )
+
+    def plot_overlay_spectrum(
+        self,
+        frequency_axis: np.ndarray,
+        spectrum: np.ndarray,
+        label: str,
+    ) -> None:
+        self.plot_spectrum(
+            frequency_axis,
+            spectrum,
+            name=label,
+            color_key="overlay",
+            width=2.0,
         )
 
     def add_peak_markers(self, peaks: list) -> None:
@@ -125,6 +154,12 @@ class SpectrumPlot:
 
     def clear(self) -> None:
         self.plot.clear()
+        if self.legend is not None:
+            self.legend.clear()
+
+    def _ensure_legend(self) -> None:
+        if self.legend is None:
+            self.legend = self.plot.addLegend(offset=(12, 12))
 
     def _peak_frequency(self, peak) -> float | None:
         frequency = getattr(peak, "frequency", None)

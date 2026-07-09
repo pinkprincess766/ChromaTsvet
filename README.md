@@ -76,8 +76,9 @@ repetitive.
 - Detect peaks with threshold, prominence, distance, and SNR controls; calculate frequency, intensity, FWHM width in bins/Hz, Gaussian area, and SNR.
 - Inspect detected peaks in the plot and in a detailed analysis table.
 - Zoom into the spectrum with the mouse.
+- Overlay a second analyzed spectrum on the current graph for visual comparison.
 - Reopen recent files, reuse the last working directory, and use workflow keyboard shortcuts.
-- Compare spectra against a local SQLite reference library.
+- Compare spectra against a local SQLite reference library and manage stored references.
 - Export detected peaks with analysis metadata to CSV and complete analysis results to PDF, HTML, or Excel.
 - Export the current spectrum graph as PNG or SVG.
 - Use light and dark application themes.
@@ -176,8 +177,9 @@ sample rate is required to convert FFT bins into physical frequency values.
 1. Open a CSV or TXT signal file.
 2. Configure sample rate, filtering, spectrum smoothing, baseline correction, and peak-detection parameters.
 3. Run the analysis and inspect marked peaks on the frequency plot.
-4. Review peak frequency, intensity, width in bins/Hz, area, and SNR in the results table.
-5. Export the peak list as CSV or generate a PDF, HTML, or Excel analysis report.
+4. Optionally load an overlay spectrum for visual comparison.
+5. Review peak frequency, intensity, width in bins/Hz, area, and SNR in the results table.
+6. Export the peak list as CSV or generate a PDF, HTML, or Excel analysis report.
 
 ## Development
 
@@ -225,6 +227,7 @@ python_analyzer/
   gui/dialogs.py             Settings, analysis settings, and log dialogs
   gui/error_messages.py      User-facing error message helpers
   gui/recent_files.py        Recent Files and remembered directory helpers
+  gui/reference_library.py   Reference library management dialog
   gui/theme.py               Qt palette and stylesheet helpers
   gui/log_view.py            Shared log-view formatting
   analysis/models.py         AnalysisSettings and LoadedSpectrum dataclasses
