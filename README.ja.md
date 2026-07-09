@@ -14,8 +14,9 @@ Python/PyQt による UI と Rust/PyO3 による信号処理コアを組み合�
 - area normalization
 - ピーク検出、FWHM 幅、Gaussian area、SNR
 - ピークのグラフ表示とテーブル表示
+- 2 つ目の解析済みスペクトルを重ねて表示
 - Recent Files、最後に使ったディレクトリ、基本的な keyboard shortcuts
-- SQLite 参照ライブラリとの簡易比較
+- SQLite 参照ライブラリとの簡易比較と保存済み参照の管理
 - ピーク CSV エクスポート
 - PDF / HTML / Excel レポート出力
 - グラフの PNG / SVG エクスポート
@@ -73,7 +74,7 @@ cargo test
 ```text
 python_analyzer/
   main.py                    起動用 bootstrap
-  gui/                       MainWindow、dialogs、theme、log view
+  gui/                       MainWindow、dialogs、reference library、theme、log view
   analysis/                  analysis settings と pipeline wrapper
   exporters/                 PDF / HTML / Excel / peak CSV export
   readers/                   CSV/TXT parser
