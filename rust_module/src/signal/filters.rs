@@ -222,7 +222,12 @@ pub fn smooth_spectrum(
         DEFAULT_SPECTRUM_SMOOTHING_METHOD | "savitzky-golay" | "savitzky_golay" => {
             let poly_order = SPECTRUM_SAVGOL_POLY_ORDER.min(normalized_window - 1);
             let smoothed = savgol_filter(&cleaned, normalized_window, poly_order);
-            (smoothed, true, DEFAULT_SPECTRUM_SMOOTHING_METHOD, normalized_window)
+            (
+                smoothed,
+                true,
+                DEFAULT_SPECTRUM_SMOOTHING_METHOD,
+                normalized_window,
+            )
         }
         "median" => (
             median_filter(&cleaned, normalized_window),

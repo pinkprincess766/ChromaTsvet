@@ -497,10 +497,7 @@ mod tests {
     fn test_requested_snr_filters_noise_peaks() {
         let data = array![0.0, 1.0, 0.0, 0.0, 0.8, 0.0, 0.0, 10.0, 0.0];
 
-        let peaks = detect_peaks_with_criteria(
-            &data,
-            PeakDetectionSettings::new(0.0, 0.0, 1, 1.0),
-        );
+        let peaks = detect_peaks_with_criteria(&data, PeakDetectionSettings::new(0.0, 0.0, 1, 1.0));
 
         assert_eq!(peaks.len(), 1);
         assert_eq!(peaks[0].position, 7.0);
@@ -511,10 +508,8 @@ mod tests {
     fn test_global_maximum_survives_strict_snr_filter() {
         let data = array![0.0, 1.0, 0.0, 0.0, 0.8, 0.0];
 
-        let peaks = detect_peaks_with_criteria(
-            &data,
-            PeakDetectionSettings::new(0.0, 0.0, 1, 1_000.0),
-        );
+        let peaks =
+            detect_peaks_with_criteria(&data, PeakDetectionSettings::new(0.0, 0.0, 1, 1_000.0));
 
         assert_eq!(peaks.len(), 1);
         assert_eq!(peaks[0].position, 1.0);
