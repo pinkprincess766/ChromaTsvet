@@ -1,6 +1,7 @@
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
 
+mod pipeline;
 mod signal;
 mod types;
 
@@ -54,113 +55,49 @@ fn process_signal<'py>(
     spectrum_smoothing_window: usize,
     min_snr: f64,
 ) -> PyResult<Bound<'py, PyDict>> {
-    // Sanitize once at the Python boundary so every filter choice reaches FFT safely.
-    let mut signal = signal::filters::sanitize_signal(&ndarray::Array1::from_vec(data));
-    let signal_len = signal.len();
-    let sample_rate = if sample_rate.is_finite() && sample_rate > 0.0 {
-        sample_rate
-    } else {
-        1.0
-    };
-
-    // The Python GUI applies the selected signal filter before calling this
-    // function and passes `filter_type = "none"`. Rust-side filtering remains
-    // for backward compatibility with direct calls to the PyO3 API.
-    signal = match filter_type.to_lowercase().as_str() {
-        "savgol" => signal::filters::savgol_filter(&signal, 11, 3),
-        "median" => signal::filters::median_filter(&signal, 5),
-        _ => signal,
-    };
-
-    // 2. FFT + оконная функция
-    let spectrum = signal::fft::compute_magnitude_spectrum(&signal, window_type);
-
-    // 3. Baseline correction before peak detection
-    let baseline_method = baseline_method.to_lowercase();
-    let baseline_applied = baseline && baseline_method != "none";
-    let corrected_spectrum = if baseline_applied {
-        let window_size = (spectrum.len() / 20).max(5);
-        let baseline_signal = match baseline_method.as_str() {
-            "simple" => signal::filters::estimate_baseline_simple(&spectrum, window_size),
-            _ => signal::filters::estimate_baseline(&spectrum, window_size),
-        };
-        &spectrum - &baseline_signal
-    } else {
-        spectrum.to_owned()
-    };
-
-    // Spectrum smoothing is deliberately placed after baseline correction and
-    // before normalization, so peak detection sees a finite, comparable curve
-    // without hiding the original acquisition filter semantics.
-    let (smoothed_spectrum, smoothing_applied, smoothing_method, smoothing_window) =
-        if spectrum_smoothing {
-            signal::filters::smooth_spectrum(
-                &corrected_spectrum,
-                spectrum_smoothing_method,
-                spectrum_smoothing_window,
-            )
-        } else {
-            (corrected_spectrum.to_owned(), false, "none", 0)
-        };
-
-    // Area normalization is applied after baseline correction/spectrum
-    // smoothing, but before peak detection. It makes spectra with different
-    // intensity scales easier to compare; downstream identification can then
-    // focus on shape and peak features.
-    let (analysis_spectrum, normalization_area) = if normalize {
-        signal::normalization::normalize_area(&smoothed_spectrum)
-    } else {
-        (smoothed_spectrum.to_owned(), 0.0)
-    };
-    let normalized = normalize && normalization_area > 0.0;
-
-    // 5. Frequency axis and peak picking
-    let frequency_axis =
-        signal::fft::compute_frequency_axis(analysis_spectrum.len(), signal_len, sample_rate);
-    // Computer programming is an art, because it applies accumulated knowledge to the world, because it requires skill and ingenuity, and especially because it produces objects of beauty
-    let mut peaks = signal::peak_detection::detect_peaks_with_criteria(
-        &analysis_spectrum,
-        signal::peak_detection::PeakDetectionSettings::new(
-            threshold,
-            prominence,
-            distance,
-            min_snr,
-        ),
+    let settings = pipeline::ProcessSettings::from_python_args(
+        sample_rate,
+        filter_type,
+        window_type,
+        threshold,
+        baseline,
+        baseline_method,
+        prominence,
+        distance,
+        normalize,
+        spectrum_smoothing,
+        spectrum_smoothing_method,
+        spectrum_smoothing_window,
+        min_snr,
     );
-    let bin_width = if signal_len > 0 {
-        sample_rate / signal_len as f64
-    } else {
-        0.0
-    };
-    for peak in peaks.iter_mut() {
-        peak.frequency = peak.position * bin_width;
-        peak.width_hz = peak.width * bin_width;
-    }
+    let output = pipeline::process_signal_data(data, settings);
 
     let dict = PyDict::new(py);
-    let _ = dict.set_item("spectrum", analysis_spectrum.to_vec());
-    let _ = dict.set_item("frequency_axis", frequency_axis);
-    let _ = dict.set_item("peaks", peaks);
-    let _ = dict.set_item("sample_rate", sample_rate);
-    let _ = dict.set_item("baseline_corrected", baseline_applied);
+    let _ = dict.set_item("spectrum", output.spectrum.to_vec());
+    let _ = dict.set_item("frequency_axis", output.frequency_axis);
+    let _ = dict.set_item("peaks", output.peaks);
+    let _ = dict.set_item("sample_rate", output.sample_rate);
+    let _ = dict.set_item("baseline_corrected", output.baseline_corrected);
+    let _ = dict.set_item("baseline_method", output.baseline_method);
+    let _ = dict.set_item("peak_threshold", output.peak_threshold);
+    let _ = dict.set_item("peak_prominence", output.peak_prominence);
+    let _ = dict.set_item("peak_distance", output.peak_distance);
+    let _ = dict.set_item("peak_min_snr", output.peak_min_snr);
+    let _ = dict.set_item("spectrum_smoothed", output.spectrum_smoothed);
     let _ = dict.set_item(
-        "baseline_method",
-        if baseline_applied {
-            baseline_method.as_str()
-        } else {
-            "none"
-        },
+        "spectrum_smoothing_method",
+        output.spectrum_smoothing_method,
     );
-    let _ = dict.set_item("peak_threshold", threshold);
-    let _ = dict.set_item("peak_prominence", prominence);
-    let _ = dict.set_item("peak_distance", distance);
-    let _ = dict.set_item("peak_min_snr", min_snr);
-    let _ = dict.set_item("spectrum_smoothed", smoothing_applied);
-    let _ = dict.set_item("spectrum_smoothing_method", smoothing_method);
-    let _ = dict.set_item("spectrum_smoothing_window", smoothing_window);
-    let _ = dict.set_item("normalized", normalized);
-    let _ = dict.set_item("normalization", if normalized { "area" } else { "none" });
-    let _ = dict.set_item("normalization_area", normalization_area);
+    let _ = dict.set_item(
+        "spectrum_smoothing_window",
+        output.spectrum_smoothing_window,
+    );
+    let _ = dict.set_item("normalized", output.normalized);
+    let _ = dict.set_item(
+        "normalization",
+        if output.normalized { "area" } else { "none" },
+    );
+    let _ = dict.set_item("normalization_area", output.normalization_area);
 
     Ok(dict)
 }
