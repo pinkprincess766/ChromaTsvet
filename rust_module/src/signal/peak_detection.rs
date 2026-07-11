@@ -3,6 +3,10 @@ use ndarray::prelude::*;
 
 const GAUSSIAN_AREA_FACTOR: f64 = 1.0645;
 const FALLBACK_HALF_WINDOW: usize = 3;
+// Sub-bin interpolation below this fraction of a bin is usually numerical
+// asymmetry around a bin-centered FFT peak; keeping the integer bin preserves
+// deterministic quality floors without suppressing genuine fractional peaks.
+const SUB_BIN_REFINEMENT_DEADBAND: f64 = 2e-3;
 
 #[derive(Debug, Clone, Copy)]
 pub struct PeakDetectionSettings {
@@ -352,10 +356,12 @@ fn refine_peak_position(signal: &Array1<f64>, peak_idx: usize) -> f64 {
     }
 
     let offset = 0.5 * (left - right) / denominator;
-    if offset.is_finite() && offset.abs() <= 1.0 {
-        peak_idx as f64 + offset
-    } else {
+    if !offset.is_finite() || offset.abs() > 1.0 {
         peak_idx as f64
+    } else if offset.abs() <= SUB_BIN_REFINEMENT_DEADBAND {
+        peak_idx as f64
+    } else {
+        peak_idx as f64 + offset
     }
 }
 
