@@ -18,6 +18,7 @@ pub(crate) struct ProcessSettings {
     pub normalize_area: bool,
     pub smoothing: SpectrumSmoothingSettings,
     pub peak_detection: signal::peak_detection::PeakDetectionSettings,
+    warnings: Vec<ProcessingWarning>,
 }
 
 impl ProcessSettings {
@@ -37,20 +38,61 @@ impl ProcessSettings {
         spectrum_smoothing_window: usize,
         min_snr: f64,
     ) -> Self {
+        let (sample_rate, sample_rate_warning) = normalized_sample_rate(sample_rate);
+        let (filter, filter_warning) = FilterKind::from_name(filter_type);
+        let (window, window_warning) = WindowKind::from_name(window_type);
+        let (baseline, baseline_warning) =
+            BaselineSettings::from_python_args(baseline, baseline_method);
+        let (smoothing, smoothing_warning) = SpectrumSmoothingSettings::from_python_args(
+            spectrum_smoothing,
+            spectrum_smoothing_method,
+            spectrum_smoothing_window,
+        );
+        let mut warnings = Vec::new();
+        warnings.extend(sample_rate_warning);
+        warnings.extend(filter_warning);
+        warnings.extend(window_warning);
+        warnings.extend(baseline_warning);
+        warnings.extend(smoothing_warning);
+
         Self {
-            sample_rate: normalized_sample_rate(sample_rate),
-            filter: FilterKind::from_name(filter_type),
-            window: WindowKind::from_name(window_type),
-            baseline: BaselineSettings::from_python_args(baseline, baseline_method),
+            sample_rate,
+            filter,
+            window,
+            baseline,
             normalize_area: normalize,
-            smoothing: SpectrumSmoothingSettings::from_python_args(
-                spectrum_smoothing,
-                spectrum_smoothing_method,
-                spectrum_smoothing_window,
-            ),
+            smoothing,
             peak_detection: signal::peak_detection::PeakDetectionSettings::new(
                 threshold, prominence, distance, min_snr,
             ),
+            warnings,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ProcessingWarning {
+    InvalidSampleRateFallback,
+    UnknownFilterFallback,
+    UnknownWindowFallback,
+    UnknownBaselineFallback,
+    UnknownSmoothingDisabled,
+    ShortSignal,
+    AreaNormalizationSkipped,
+    NoPeaksDetected,
+}
+
+impl ProcessingWarning {
+    pub(crate) fn as_str(self) -> &'static str {
+        match self {
+            Self::InvalidSampleRateFallback => "invalid_sample_rate_fallback",
+            Self::UnknownFilterFallback => "unknown_filter_fallback_none",
+            Self::UnknownWindowFallback => "unknown_window_fallback_rectangular",
+            Self::UnknownBaselineFallback => "unknown_baseline_method_fallback_improved",
+            Self::UnknownSmoothingDisabled => "unknown_smoothing_method_disabled",
+            Self::ShortSignal => "short_signal_no_peak_detection",
+            Self::AreaNormalizationSkipped => "area_normalization_skipped",
+            Self::NoPeaksDetected => "no_peaks_detected",
         }
     }
 }
@@ -63,11 +105,12 @@ pub(crate) enum FilterKind {
 }
 
 impl FilterKind {
-    fn from_name(name: &str) -> Self {
+    fn from_name(name: &str) -> (Self, Option<ProcessingWarning>) {
         match name.to_ascii_lowercase().as_str() {
-            "savgol" => Self::Savgol,
-            "median" => Self::Median,
-            _ => Self::None,
+            "savgol" => (Self::Savgol, None),
+            "median" => (Self::Median, None),
+            "none" | "" => (Self::None, None),
+            _ => (Self::None, Some(ProcessingWarning::UnknownFilterFallback)),
         }
     }
 }
@@ -80,11 +123,15 @@ pub(crate) enum WindowKind {
 }
 
 impl WindowKind {
-    fn from_name(name: &str) -> Self {
+    fn from_name(name: &str) -> (Self, Option<ProcessingWarning>) {
         match name.to_ascii_lowercase().as_str() {
-            "hann" => Self::Hann,
-            "hamming" => Self::Hamming,
-            _ => Self::Rectangular,
+            "hann" => (Self::Hann, None),
+            "hamming" => (Self::Hamming, None),
+            "rectangular" | "none" | "" => (Self::Rectangular, None),
+            _ => (
+                Self::Rectangular,
+                Some(ProcessingWarning::UnknownWindowFallback),
+            ),
         }
     }
 
@@ -105,11 +152,15 @@ pub(crate) enum BaselineMethod {
 }
 
 impl BaselineMethod {
-    fn from_name(name: &str) -> Self {
+    fn from_name(name: &str) -> (Self, Option<ProcessingWarning>) {
         match name.to_ascii_lowercase().as_str() {
-            "none" => Self::None,
-            "simple" => Self::Simple,
-            _ => Self::Improved,
+            "none" => (Self::None, None),
+            "simple" => (Self::Simple, None),
+            "improved" | "" => (Self::Improved, None),
+            _ => (
+                Self::Improved,
+                Some(ProcessingWarning::UnknownBaselineFallback),
+            ),
         }
     }
 
@@ -128,14 +179,14 @@ pub(crate) struct BaselineSettings {
 }
 
 impl BaselineSettings {
-    fn from_python_args(enabled: bool, method_name: &str) -> Self {
-        let method = if enabled {
+    fn from_python_args(enabled: bool, method_name: &str) -> (Self, Option<ProcessingWarning>) {
+        let (method, warning) = if enabled {
             BaselineMethod::from_name(method_name)
         } else {
-            BaselineMethod::None
+            (BaselineMethod::None, None)
         };
 
-        Self { method }
+        (Self { method }, warning)
     }
 
     fn is_enabled(self) -> bool {
@@ -155,11 +206,15 @@ pub(crate) enum SpectrumSmoothingMethod {
 }
 
 impl SpectrumSmoothingMethod {
-    fn from_name(name: &str) -> Self {
+    fn from_name(name: &str) -> (Self, Option<ProcessingWarning>) {
         match name.to_ascii_lowercase().as_str() {
-            "savgol" => Self::Savgol,
-            "median" => Self::Median,
-            _ => Self::None,
+            "savgol" => (Self::Savgol, None),
+            "median" => (Self::Median, None),
+            "none" | "" => (Self::None, None),
+            _ => (
+                Self::None,
+                Some(ProcessingWarning::UnknownSmoothingDisabled),
+            ),
         }
     }
 
@@ -179,17 +234,24 @@ pub(crate) struct SpectrumSmoothingSettings {
 }
 
 impl SpectrumSmoothingSettings {
-    fn from_python_args(enabled: bool, method_name: &str, requested_window: usize) -> Self {
-        let method = if enabled {
+    fn from_python_args(
+        enabled: bool,
+        method_name: &str,
+        requested_window: usize,
+    ) -> (Self, Option<ProcessingWarning>) {
+        let (method, warning) = if enabled {
             SpectrumSmoothingMethod::from_name(method_name)
         } else {
-            SpectrumSmoothingMethod::None
+            (SpectrumSmoothingMethod::None, None)
         };
 
-        Self {
-            method,
-            requested_window,
-        }
+        (
+            Self {
+                method,
+                requested_window,
+            },
+            warning,
+        )
     }
 
     fn is_enabled(self) -> bool {
@@ -218,16 +280,26 @@ pub(crate) struct ProcessOutput {
     pub peak_prominence: f64,
     pub peak_distance: usize,
     pub peak_min_snr: f64,
+    pub warnings: Vec<ProcessingWarning>,
 }
 
 pub(crate) fn process_signal_data(data: Vec<f64>, settings: ProcessSettings) -> ProcessOutput {
+    let mut warnings = settings.warnings.clone();
     let signal = prepare_signal(data, settings.filter);
     let signal_len = signal.len();
+    if signal_len < 3 {
+        warnings.push(ProcessingWarning::ShortSignal);
+    }
+
     let spectrum = compute_spectrum(&signal, settings.window);
     let baseline_output = apply_baseline_correction(&spectrum, settings.baseline);
     let smoothing_output = apply_spectrum_smoothing(&baseline_output.spectrum, settings.smoothing);
     let normalization_output =
         apply_area_normalization(&smoothing_output.spectrum, settings.normalize_area);
+    if settings.normalize_area && !normalization_output.normalized {
+        warnings.push(ProcessingWarning::AreaNormalizationSkipped);
+    }
+
     let frequency_axis = signal::fft::compute_frequency_axis(
         normalization_output.spectrum.len(),
         signal_len,
@@ -239,6 +311,9 @@ pub(crate) fn process_signal_data(data: Vec<f64>, settings: ProcessSettings) -> 
         settings.sample_rate,
         settings.peak_detection,
     );
+    if peaks.is_empty() && signal_len >= 3 {
+        warnings.push(ProcessingWarning::NoPeaksDetected);
+    }
 
     ProcessOutput {
         spectrum: normalization_output.spectrum,
@@ -256,6 +331,7 @@ pub(crate) fn process_signal_data(data: Vec<f64>, settings: ProcessSettings) -> 
         peak_prominence: settings.peak_detection.min_prominence,
         peak_distance: settings.peak_detection.min_distance,
         peak_min_snr: settings.peak_detection.min_snr,
+        warnings,
     }
 }
 
@@ -393,11 +469,14 @@ fn detect_and_annotate_peaks(
     peaks
 }
 
-fn normalized_sample_rate(sample_rate: f64) -> f64 {
+fn normalized_sample_rate(sample_rate: f64) -> (f64, Option<ProcessingWarning>) {
     if sample_rate.is_finite() && sample_rate > 0.0 {
-        sample_rate
+        (sample_rate, None)
     } else {
-        DEFAULT_SAMPLE_RATE
+        (
+            DEFAULT_SAMPLE_RATE,
+            Some(ProcessingWarning::InvalidSampleRateFallback),
+        )
     }
 }
 
@@ -428,6 +507,18 @@ mod tests {
         assert_eq!(settings.window, WindowKind::Rectangular);
         assert_eq!(settings.baseline.method, BaselineMethod::None);
         assert_eq!(settings.smoothing.method, SpectrumSmoothingMethod::None);
+        assert!(settings
+            .warnings
+            .contains(&ProcessingWarning::InvalidSampleRateFallback));
+        assert!(settings
+            .warnings
+            .contains(&ProcessingWarning::UnknownFilterFallback));
+        assert!(settings
+            .warnings
+            .contains(&ProcessingWarning::UnknownWindowFallback));
+        assert!(settings
+            .warnings
+            .contains(&ProcessingWarning::UnknownSmoothingDisabled));
     }
 
     #[test]
@@ -488,5 +579,33 @@ mod tests {
                 && peak.area.is_finite()
                 && peak.snr.is_finite()
         }));
+    }
+
+    #[test]
+    fn pipeline_reports_area_normalization_and_peak_absence_warnings() {
+        let settings = ProcessSettings::from_python_args(
+            100.0,
+            "none",
+            "rectangular",
+            0.01,
+            false,
+            "none",
+            0.0,
+            0,
+            true,
+            false,
+            "none",
+            0,
+            0.0,
+        );
+
+        let output = process_signal_data(vec![0.0, 0.0, 0.0, 0.0], settings);
+
+        assert!(output
+            .warnings
+            .contains(&ProcessingWarning::AreaNormalizationSkipped));
+        assert!(output
+            .warnings
+            .contains(&ProcessingWarning::NoPeaksDetected));
     }
 }
