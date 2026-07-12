@@ -3,6 +3,10 @@ use ndarray::prelude::*;
 
 const GAUSSIAN_AREA_FACTOR: f64 = 1.0645;
 const FALLBACK_HALF_WINDOW: usize = 3;
+// Sub-bin interpolation below this fraction of a bin is usually numerical
+// asymmetry around a bin-centered FFT peak; keeping the integer bin preserves
+// deterministic quality floors without suppressing genuine fractional peaks.
+const SUB_BIN_REFINEMENT_DEADBAND: f64 = 2e-3;
 
 #[derive(Debug, Clone, Copy)]
 pub struct PeakDetectionSettings {
@@ -32,8 +36,20 @@ struct PeakCandidate {
     index: usize,
     intensity: f64,
     prominence: f64,
+    baseline_level: f64,
+    left_base: f64,
+    right_base: f64,
+    noise: f64,
     snr: f64,
     is_global_max: bool,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct ProminenceEstimate {
+    prominence: f64,
+    baseline_level: f64,
+    left_base: f64,
+    right_base: f64,
 }
 
 pub fn detect_peaks_adaptive(signal: &Array1<f64>, threshold_factor: f64) -> Vec<Peak> {
@@ -141,13 +157,18 @@ pub fn detect_peaks_with_criteria(
             continue;
         }
 
-        let prominence = estimate_prominence(signal, i);
+        let prominence_estimate = estimate_prominence(signal, i);
+        let prominence = prominence_estimate.prominence;
         let snr = prominence / noise;
         if prominence >= min_prominence && (min_snr <= 0.0 || snr >= min_snr) {
             candidates.push(PeakCandidate {
                 index: i,
                 intensity: current,
                 prominence,
+                baseline_level: prominence_estimate.baseline_level,
+                left_base: prominence_estimate.left_base,
+                right_base: prominence_estimate.right_base,
+                noise,
                 snr,
                 is_global_max: i == global_idx,
             });
@@ -155,11 +176,17 @@ pub fn detect_peaks_with_criteria(
     }
 
     if !candidates.iter().any(|peak| peak.index == global_idx) {
+        let prominence_estimate = estimate_prominence(signal, global_idx);
+        let prominence = prominence_estimate.prominence.max(dynamic_range);
         candidates.push(PeakCandidate {
             index: global_idx,
             intensity: global_value,
-            prominence: estimate_prominence(signal, global_idx).max(dynamic_range),
-            snr: estimate_prominence(signal, global_idx).max(dynamic_range) / noise,
+            prominence,
+            baseline_level: global_value - prominence,
+            left_base: prominence_estimate.left_base,
+            right_base: prominence_estimate.right_base,
+            noise,
+            snr: prominence / noise,
             is_global_max: true,
         });
     }
@@ -183,11 +210,17 @@ pub fn detect_peaks_with_criteria(
     }
 
     if selected.is_empty() {
+        let prominence_estimate = estimate_prominence(signal, global_idx);
+        let prominence = prominence_estimate.prominence.max(dynamic_range);
         selected.push(PeakCandidate {
             index: global_idx,
             intensity: global_value,
-            prominence: estimate_prominence(signal, global_idx).max(dynamic_range),
-            snr: estimate_prominence(signal, global_idx).max(dynamic_range) / noise,
+            prominence,
+            baseline_level: global_value - prominence,
+            left_base: prominence_estimate.left_base,
+            right_base: prominence_estimate.right_base,
+            noise,
+            snr: prominence / noise,
             is_global_max: true,
         });
     }
@@ -216,11 +249,18 @@ fn estimate_noise(values: &[f64], mean: f64) -> f64 {
     variance.sqrt().max(1e-8)
 }
 
-fn estimate_prominence(signal: &Array1<f64>, peak_idx: usize) -> f64 {
+fn estimate_prominence(signal: &Array1<f64>, peak_idx: usize) -> ProminenceEstimate {
     let peak_value = signal[peak_idx];
     let left_min = scan_min_until_higher(signal, peak_idx, true, peak_value);
     let right_min = scan_min_until_higher(signal, peak_idx, false, peak_value);
-    peak_value - left_min.max(right_min)
+    let baseline_level = left_min.max(right_min);
+
+    ProminenceEstimate {
+        prominence: peak_value - baseline_level,
+        baseline_level,
+        left_base: left_min,
+        right_base: right_min,
+    }
 }
 
 fn scan_min_until_higher(
@@ -259,9 +299,9 @@ fn scan_min_until_higher(
 }
 
 fn build_peak(signal: &Array1<f64>, candidate: PeakCandidate) -> Peak {
-    let baseline_level = candidate.intensity - candidate.prominence;
-    let peak_height = candidate.intensity - baseline_level;
-    let half_height = baseline_level + candidate.prominence * 0.5;
+    let refined_position = refine_peak_position(signal, candidate.index);
+    let peak_height = candidate.intensity - candidate.baseline_level;
+    let half_height = candidate.baseline_level + candidate.prominence * 0.5;
     let left = half_height_crossing(signal, candidate.index, half_height, true);
     let right = half_height_crossing(signal, candidate.index, half_height, false);
     let width = match (left, right) {
@@ -271,18 +311,57 @@ fn build_peak(signal: &Array1<f64>, candidate: PeakCandidate) -> Peak {
 
     let (integration_left, integration_right) =
         integration_bounds(signal.len(), candidate.index, left, right);
-    let numeric_area =
-        integrate_peak_trapezoidal(signal, integration_left, integration_right, baseline_level);
+    let numeric_area = integrate_peak_trapezoidal(
+        signal,
+        integration_left,
+        integration_right,
+        candidate.baseline_level,
+    );
     let area = gaussian_peak_area(peak_height, width).unwrap_or(numeric_area);
 
     Peak {
-        position: candidate.index as f64,
+        position: refined_position,
         frequency: 0.0,
         intensity: candidate.intensity,
+        prominence: candidate.prominence,
+        baseline_level: candidate.baseline_level,
+        left_base: candidate.left_base,
+        right_base: candidate.right_base,
         width,
         width_hz: 0.0,
         area,
+        noise: candidate.noise,
         snr: candidate.snr,
+        is_global_max: candidate.is_global_max,
+    }
+}
+
+fn refine_peak_position(signal: &Array1<f64>, peak_idx: usize) -> f64 {
+    if peak_idx == 0 || peak_idx + 1 >= signal.len() {
+        return peak_idx as f64;
+    }
+
+    let left = signal[peak_idx - 1];
+    let center = signal[peak_idx];
+    let right = signal[peak_idx + 1];
+    if !(left.is_finite() && center.is_finite() && right.is_finite()) {
+        return peak_idx as f64;
+    }
+
+    // A local quadratic interpolant estimates the vertex in O(1) time and
+    // improves frequency estimates without changing peak selection semantics.
+    let denominator = left - 2.0 * center + right;
+    if !denominator.is_finite() || denominator.abs() <= f64::EPSILON {
+        return peak_idx as f64;
+    }
+
+    let offset = 0.5 * (left - right) / denominator;
+    if !offset.is_finite() || offset.abs() > 1.0 {
+        peak_idx as f64
+    } else if offset.abs() <= SUB_BIN_REFINEMENT_DEADBAND {
+        peak_idx as f64
+    } else {
+        peak_idx as f64 + offset
     }
 }
 
@@ -414,9 +493,34 @@ mod tests {
 
         assert_eq!(peaks.len(), 1);
         assert_eq!(peaks[0].position, 3.0);
+        assert!(peaks[0].prominence > 0.0);
+        assert!(peaks[0].baseline_level.is_finite());
+        assert!(peaks[0].left_base.is_finite());
+        assert!(peaks[0].right_base.is_finite());
+        assert!(peaks[0].noise.is_finite());
+        assert!(peaks[0].is_global_max);
         assert!(peaks[0].width > 0.0);
         assert!(peaks[0].area > 0.0);
         assert!(peaks[0].snr > 0.0);
+    }
+
+    #[test]
+    fn test_peak_position_uses_local_quadratic_refinement() {
+        let data = array![0.0, 1.0, 4.0, 3.0, 0.0];
+        let peaks = detect_peaks_adaptive(&data, 0.1);
+
+        assert_eq!(peaks.len(), 1);
+        assert!(peaks[0].position > 2.0);
+        assert!(peaks[0].position < 2.5);
+    }
+
+    #[test]
+    fn test_flat_or_edge_peak_refinement_stays_finite() {
+        assert_eq!(refine_peak_position(&array![3.0, 2.0, 1.0], 0), 0.0);
+        assert_eq!(refine_peak_position(&array![1.0, 2.0, 3.0], 2), 2.0);
+        let plateau_position = refine_peak_position(&array![1.0, 2.0, 2.0, 1.0], 1);
+        assert!(plateau_position.is_finite());
+        assert!((1.0..=2.0).contains(&plateau_position));
     }
 
     #[test]
@@ -469,7 +573,7 @@ mod tests {
         let peaks = detect_peaks_adaptive(&data, 10_000.0);
 
         assert_eq!(peaks.len(), 1);
-        assert_eq!(peaks[0].position, 5.0);
+        assert!((peaks[0].position - 5.0).abs() < 0.05);
         assert!(peaks[0].width > 0.0);
         assert!(peaks[0].area > 0.0);
         assert!(peaks[0].snr > 0.0);

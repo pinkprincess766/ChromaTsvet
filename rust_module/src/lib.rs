@@ -98,6 +98,12 @@ fn process_signal<'py>(
         if output.normalized { "area" } else { "none" },
     );
     let _ = dict.set_item("normalization_area", output.normalization_area);
+    let warnings: Vec<&'static str> = output
+        .warnings
+        .iter()
+        .map(|warning| warning.as_str())
+        .collect();
+    let _ = dict.set_item("processing_warnings", warnings);
 
     Ok(dict)
 }
