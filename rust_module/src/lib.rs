@@ -5,6 +5,9 @@ mod pipeline;
 mod signal;
 mod types;
 
+#[cfg(test)]
+mod validation;
+
 pub use types::Peak;
 
 #[pymodule]
