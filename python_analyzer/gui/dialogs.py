@@ -7,7 +7,8 @@ import json
 from PyQt5.QtWidgets import (
     QDialog, QVBoxLayout, QFormLayout, QComboBox, QSpinBox, QHBoxLayout,
     QPushButton, QLabel, QDialogButtonBox, QTextEdit, QGroupBox, QCheckBox,
-    QDoubleSpinBox, QTabWidget, QApplication, QTableWidget, QTableWidgetItem
+    QDoubleSpinBox, QTabWidget, QApplication, QTableWidget, QTableWidgetItem,
+    QInputDialog, QMessageBox
 )
 from PyQt5.QtCore import Qt
 from PyQt5.QtGui import QFont, QFontDatabase, QTextCursor
@@ -181,6 +182,27 @@ class AnalysisSettingsDialog(QDialog):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(16, 16, 16, 12)
         layout.setSpacing(12)
+
+        method_group = QGroupBox("Analysis methods")
+        method_layout = QHBoxLayout(method_group)
+        method_layout.setSpacing(8)
+
+        self.method_preset_combo = QComboBox()
+        self.method_preset_combo.setMinimumWidth(180)
+        self.method_preset_combo.setToolTip("Saved analysis parameter presets")
+        method_layout.addWidget(self.method_preset_combo, 1)
+
+        self.method_load_button = QPushButton("Load")
+        self.method_save_button = QPushButton("Save")
+        self.method_delete_button = QPushButton("Delete")
+        self.method_load_button.clicked.connect(self._load_method_preset)
+        self.method_save_button.clicked.connect(self._save_method_preset)
+        self.method_delete_button.clicked.connect(self._delete_method_preset)
+        method_layout.addWidget(self.method_load_button)
+        method_layout.addWidget(self.method_save_button)
+        method_layout.addWidget(self.method_delete_button)
+        layout.addWidget(method_group)
+        self._refresh_method_presets()
 
         baseline_group = QGroupBox("Baseline correction")
         baseline_layout = QVBoxLayout(baseline_group)
@@ -392,6 +414,75 @@ class AnalysisSettingsDialog(QDialog):
             self._update_filter_params_visibility
         )
         self._update_filter_params_visibility()
+
+    def _refresh_method_presets(self, selected_name=None):
+        names = self.main_window.list_method_presets()
+        self.method_preset_combo.clear()
+        if not names:
+            self.method_preset_combo.addItem("No saved methods", "")
+            self.method_load_button.setEnabled(False)
+            self.method_delete_button.setEnabled(False)
+            return
+
+        for name in names:
+            self.method_preset_combo.addItem(name, name)
+        current_name = selected_name or getattr(
+            self.main_window,
+            "current_method_preset_name",
+            "",
+        )
+        index = self.method_preset_combo.findData(current_name)
+        self.method_preset_combo.setCurrentIndex(max(0, index))
+        self.method_load_button.setEnabled(True)
+        self.method_delete_button.setEnabled(True)
+
+    def _selected_method_preset_name(self):
+        return self.method_preset_combo.currentData() or ""
+
+    def _load_method_preset(self):
+        preset_name = self._selected_method_preset_name()
+        if not preset_name:
+            return
+        if self.main_window.apply_method_preset(preset_name):
+            self.accept()
+
+    def _save_method_preset(self):
+        default_name = (
+            self._selected_method_preset_name()
+            or getattr(self.main_window, "current_method_preset_name", "")
+            or "New method"
+        )
+        name, ok = QInputDialog.getText(
+            self,
+            "Save analysis method",
+            "Method name:",
+            text=default_name,
+        )
+        if not ok:
+            return
+
+        self.apply_settings()
+        saved_name = self.main_window.save_current_method_preset(name)
+        if saved_name:
+            self._refresh_method_presets(saved_name)
+
+    def _delete_method_preset(self):
+        preset_name = self._selected_method_preset_name()
+        if not preset_name:
+            return
+
+        reply = QMessageBox.question(
+            self,
+            "Delete analysis method",
+            f"Delete analysis method '{preset_name}'?",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No,
+        )
+        if reply != QMessageBox.Yes:
+            return
+
+        if self.main_window.delete_method_preset(preset_name):
+            self._refresh_method_presets()
 
     def _update_filter_params_visibility(self):
         median_selected = self.filter_type_combo.currentData() == "median"

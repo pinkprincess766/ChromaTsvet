@@ -27,6 +27,8 @@ PEAK_CSV_HEADERS = [
     "width_hz",
     "area",
     "snr",
+    "review_status",
+    "review_reason",
 ]
 
 _METADATA_COLUMNS = PEAK_CSV_HEADERS[:11]
@@ -36,12 +38,14 @@ def write_peaks_csv(
     file_path: str | Path,
     peaks: Sequence[Any],
     metadata: Mapping[str, Any],
+    peak_reviews: Sequence[Any] | None = None,
 ) -> None:
     """Write detected peaks as a flat, analysis-aware CSV table."""
     with Path(file_path).open("w", newline="", encoding="utf-8") as csv_file:
         writer = csv.writer(csv_file)
         writer.writerow(PEAK_CSV_HEADERS)
-        for peak in peaks:
+        for index, peak in enumerate(peaks):
+            review = _review_at(peak_reviews, index)
             writer.writerow(
                 [
                     *(metadata.get(column, "") for column in _METADATA_COLUMNS),
@@ -52,6 +56,8 @@ def write_peaks_csv(
                     _peak_value(peak, "width_hz"),
                     _peak_value(peak, "area"),
                     _peak_value(peak, "snr"),
+                    getattr(review, "status", ""),
+                    getattr(review, "reason", ""),
                 ]
             )
 
@@ -70,3 +76,9 @@ def _peak_frequency(peak: Any) -> Any:
     if frequency is not None and math.isfinite(frequency):
         return frequency
     return _peak_value(peak, "position")
+
+
+def _review_at(peak_reviews: Sequence[Any] | None, index: int) -> Any:
+    if peak_reviews is None or index >= len(peak_reviews):
+        return None
+    return peak_reviews[index]
