@@ -39,6 +39,24 @@ from python_analyzer.core.identification import (
 )
 from python_analyzer.readers import read_spectrum_file, SpectrumFileFormatError
 from python_analyzer.analysis.models import AnalysisSettings, LoadedSpectrum
+from python_analyzer.analysis.method_presets import (
+    delete_method_preset,
+    list_method_preset_names,
+    load_method_preset,
+    sanitize_preset_name,
+    save_method_preset,
+)
+from python_analyzer.analysis.peak_review import (
+    PEAK_REVIEW_ACCEPTED,
+    PEAK_REVIEW_MANUAL,
+    PEAK_REVIEW_REJECTED,
+    PEAK_REVIEW_STATUSES,
+    PeakReview,
+    is_peak_review_exportable,
+    review_peaks,
+    review_summary,
+    set_peak_review_status,
+)
 from python_analyzer.analysis.runner import run_analysis as run_analysis_pipeline
 from python_analyzer.analysis.windowing import (
     DEFAULT_FFT_WINDOW,
@@ -193,6 +211,7 @@ class MainWindow(QMainWindow):
         self.current_data = None
         self.current_result = None
         self.current_peaks = []
+        self.current_peak_reviews: list[PeakReview] = []
         self.current_file_name = None
         self.current_file_path = None
         self.current_spectrum: LoadedSpectrum | None = None
@@ -273,6 +292,9 @@ class MainWindow(QMainWindow):
             self.settings, "analysis/peak_frequency_tolerance", 5.0, 0.1, 1000.0
         )
         self.data_type = self.settings.value("analysis/data_type", "generic") or "generic"
+        self.current_method_preset_name = (
+            self.settings.value("analysis/current_method_preset", "") or ""
+        )
 
         self.analysis_settings = self._build_analysis_settings()
 
@@ -356,7 +378,7 @@ class MainWindow(QMainWindow):
         self.results_tabs = QTabWidget()
 
         self.peak_table = QTableWidget()
-        self.peak_table.setColumnCount(7)
+        self.peak_table.setColumnCount(9)
         self.peak_table.setHorizontalHeaderLabels(
             [
                 "Frequency (Hz)",
@@ -366,6 +388,8 @@ class MainWindow(QMainWindow):
                 "Width (Hz)",
                 "Area",
                 "SNR",
+                "Review",
+                "Reason",
             ]
         )
         self.peak_table.setAlternatingRowColors(True)
@@ -647,6 +671,7 @@ class MainWindow(QMainWindow):
         spectrum_smoothing_window=DEFAULT_SPECTRUM_SMOOTHING_WINDOW,
         peak_frequency_tolerance=5.0,
         data_type="generic",
+        method_preset_name="",
     ):
         try:
             normalized_filter_type, normalized_filter_params = (
@@ -711,6 +736,7 @@ class MainWindow(QMainWindow):
         self.spectrum_smoothing_window = normalized_smoothing_window
         self.peak_frequency_tolerance = normalized_tolerance
         self.data_type = normalized_data_type
+        self.current_method_preset_name = str(method_preset_name or "").strip()
 
         self.analysis_settings = self._build_analysis_settings()
 
@@ -745,6 +771,10 @@ class MainWindow(QMainWindow):
             self.peak_frequency_tolerance,
         )
         self.settings.setValue("analysis/data_type", self.data_type)
+        self.settings.setValue(
+            "analysis/current_method_preset",
+            self.current_method_preset_name,
+        )
         self.settings.sync()
         if self.settings.status() != QSettings.NoError:
             self.log(
@@ -768,12 +798,103 @@ class MainWindow(QMainWindow):
             f"window={self.window_type}, "
             f"filter={self.filter_type}, filter_params={self.filter_params}, "
             f"smoothing={smoothing_description}, "
-            f"normalization={'area' if self.normalize_area else 'disabled'}",
+            f"normalization={'area' if self.normalize_area else 'disabled'}, "
+            f"method={self.current_method_preset_name or 'custom'}",
             status_message="Analysis settings applied",
         )
         self._update_status_summary()
         if self.current_data is not None:
             self.run_analysis()
+
+    def list_method_presets(self):
+        return list_method_preset_names(self.settings)
+
+    def save_current_method_preset(self, name):
+        try:
+            preset_name = save_method_preset(
+                self.settings,
+                name,
+                self._build_analysis_settings(),
+            )
+        except ValueError as exc:
+            self._show_error(
+                "Invalid method name",
+                "Method preset names cannot be empty.",
+                exception=exc,
+                status_message="Method preset was not saved",
+            )
+            return None
+
+        self.current_method_preset_name = preset_name
+        self.settings.setValue("analysis/current_method_preset", preset_name)
+        self.settings.sync()
+        self.log(
+            f"Analysis method saved: {preset_name}",
+            status_message=f"Method saved: {preset_name}",
+        )
+        self._update_status_summary()
+        return preset_name
+
+    def delete_method_preset(self, name):
+        try:
+            removed = delete_method_preset(self.settings, name)
+        except ValueError:
+            removed = False
+        if removed and self.current_method_preset_name == name:
+            self.current_method_preset_name = ""
+            self.settings.setValue("analysis/current_method_preset", "")
+            self.settings.sync()
+        if removed:
+            self.log(
+                f"Analysis method deleted: {name}",
+                status_message=f"Method deleted: {name}",
+            )
+        return removed
+
+    def apply_method_preset(self, name):
+        try:
+            preset_name = sanitize_preset_name(name)
+            preset = load_method_preset(self.settings, name)
+        except ValueError as exc:
+            self._show_error(
+                "Invalid method name",
+                "The selected analysis method could not be loaded.",
+                exception=exc,
+                status_message="Method preset was not loaded",
+            )
+            return False
+
+        if preset is None:
+            self._show_warning(
+                "Method not found",
+                "The selected analysis method no longer exists.",
+                status_message="Method preset was not loaded",
+            )
+            return False
+
+        self._apply_analysis_settings_model(preset, method_preset_name=preset_name)
+        return True
+
+    def _apply_analysis_settings_model(self, settings, *, method_preset_name=""):
+        self.set_analysis_settings(
+            baseline_enabled=settings.baseline_enabled,
+            baseline_method=settings.baseline_method,
+            peak_threshold=settings.peak_threshold,
+            peak_prominence=settings.peak_prominence,
+            peak_distance=settings.peak_distance,
+            peak_min_snr=settings.peak_min_snr,
+            filter_type=settings.filter_type,
+            filter_params=settings.filter_params,
+            sample_rate=settings.sample_rate,
+            window_type=settings.window_type,
+            normalize_area=settings.normalize_area,
+            spectrum_smoothing_enabled=settings.spectrum_smoothing_enabled,
+            spectrum_smoothing_method=settings.spectrum_smoothing_method,
+            spectrum_smoothing_window=settings.spectrum_smoothing_window,
+            peak_frequency_tolerance=settings.peak_frequency_tolerance,
+            data_type=settings.data_type,
+            method_preset_name=method_preset_name,
+        )
 
     def set_theme(self, theme):
         self.theme = theme if theme in ("dark", "light") else DEFAULT_THEME
@@ -946,9 +1067,16 @@ class MainWindow(QMainWindow):
         if self.current_data is None:
             status_text = "No data | idle"
         elif self.current_result is not None:
+            review_counts = review_summary(self.current_peak_reviews)
+            review_suffix = ""
+            if self.current_peak_reviews:
+                review_suffix = (
+                    f" | accepted={review_counts[PEAK_REVIEW_ACCEPTED]}, "
+                    f"rejected={review_counts[PEAK_REVIEW_REJECTED]}"
+                )
             status_text = (
                 f"{point_count} points | {peak_count} peaks | analyzed | "
-                f"threshold={self.peak_threshold:.3f}{overlay_suffix}"
+                f"threshold={self.peak_threshold:.3f}{review_suffix}{overlay_suffix}"
             )
         else:
             status_text = f"{point_count} points | {self.analysis_status}{overlay_suffix}"
@@ -975,7 +1103,8 @@ class MainWindow(QMainWindow):
             f"filter={filter_description}, threshold={self.peak_threshold:.3f}, "
             f"baseline={baseline_description}, window={self.window_type}, "
             f"smoothing={smoothing_description}, "
-            f"sample_rate={self.sample_rate:g} Hz"
+            f"sample_rate={self.sample_rate:g} Hz, "
+            f"method={self.current_method_preset_name or 'custom'}"
         )
 
     def _update_export_actions(self):
@@ -1057,7 +1186,14 @@ class MainWindow(QMainWindow):
             return frequency
         return getattr(peak, "position", None)
 
-    def _set_peak_table(self, peaks):
+    def _set_peak_table(self, peaks, reviews=None):
+        if reviews is None:
+            reviews = review_peaks(peaks, self.analysis_settings)
+        reviews = list(reviews)
+        if len(reviews) != len(peaks):
+            reviews = review_peaks(peaks, self.analysis_settings)
+        self.current_peak_reviews = reviews
+
         self.peak_table.setRowCount(len(peaks))
         for row, peak in enumerate(peaks):
             values = [
@@ -1071,6 +1207,46 @@ class MainWindow(QMainWindow):
             ]
             for column, value in enumerate(values):
                 self.peak_table.setItem(row, column, self._readonly_table_item(value))
+            self._set_peak_review_cell(row, reviews[row])
+
+    def _set_peak_review_cell(self, row, review):
+        combo = QComboBox()
+        for status in PEAK_REVIEW_STATUSES:
+            combo.addItem(status.replace("_", " ").title(), status)
+        current_index = combo.findData(review.status)
+        combo.setCurrentIndex(max(0, current_index))
+        combo.currentIndexChanged.connect(
+            lambda _index, row=row, combo=combo: self._handle_peak_review_changed(
+                row,
+                combo.currentData(),
+            )
+        )
+        self.peak_table.setCellWidget(row, 7, combo)
+        self.peak_table.setItem(row, 8, self._readonly_table_item(review.reason))
+        self._apply_peak_review_row_style(row, review)
+
+    def _handle_peak_review_changed(self, row, status):
+        if row < 0 or row >= len(self.current_peak_reviews):
+            return
+        review = set_peak_review_status(self.current_peak_reviews[row], status)
+        self.current_peak_reviews[row] = review
+        reason_item = self.peak_table.item(row, 8)
+        if reason_item is not None:
+            reason_item.setText(review.reason)
+        self._apply_peak_review_row_style(row, review)
+        self._update_status_summary()
+
+    def _apply_peak_review_row_style(self, row, review):
+        color = {
+            PEAK_REVIEW_ACCEPTED: QColor("#E6F4EA"),
+            PEAK_REVIEW_MANUAL: QColor("#E8F0FE"),
+            PEAK_REVIEW_REJECTED: QColor("#FCE8E6"),
+        }.get(review.status, QColor("#FEF7E0"))
+
+        for column in range(self.peak_table.columnCount()):
+            item = self.peak_table.item(row, column)
+            if item is not None:
+                item.setBackground(color)
 
     def _set_match_table(self, matches):
         self.table.setRowCount(len(matches))
@@ -1181,6 +1357,7 @@ class MainWindow(QMainWindow):
         self.current_file_path = str(file_path.resolve())
         self.current_result = None
         self.current_peaks = []
+        self.current_peak_reviews = []
         self.current_frequency_axis = None
         self.current_spectrum_values = None
         self._reset_overlay_state()
@@ -1274,6 +1451,7 @@ class MainWindow(QMainWindow):
 
         self.current_result = None
         self.current_peaks = []
+        self.current_peak_reviews = []
         self.analysis_status = "analyzing"
         self._update_status_summary()
         self._set_peak_table([])
@@ -1319,6 +1497,7 @@ class MainWindow(QMainWindow):
             )
             peaks = result.get("peaks", [])
             self.current_peaks = peaks  # store for adding references with peak data
+            self.current_peak_reviews = review_peaks(peaks, self.analysis_settings)
             self.current_frequency_axis = frequency_axis
             self.current_spectrum_values = spectrum
 
@@ -1351,7 +1530,7 @@ class MainWindow(QMainWindow):
             else:
                 matches = self.identifier.find_matches(spectrum)
 
-            self._set_peak_table(peaks)
+            self._set_peak_table(peaks, self.current_peak_reviews)
             self._set_match_table(matches)
             self._update_result_tab_titles(len(peaks), len(matches))
             self.current_result = result
@@ -1458,6 +1637,17 @@ class MainWindow(QMainWindow):
 
         self.spectrum_plot.add_peak_markers(self.current_peaks)
 
+    def _peaks_for_reference_library(self):
+        if not self.current_peaks:
+            return []
+        if len(self.current_peak_reviews) != len(self.current_peaks):
+            return list(self.current_peaks)
+        return [
+            peak
+            for peak, review in zip(self.current_peaks, self.current_peak_reviews)
+            if is_peak_review_exportable(review)
+        ]
+
     def add_substance(self):
         name, ok = QInputDialog.getText(self, "New substance", "Name:")
         if not ok:
@@ -1493,11 +1683,7 @@ class MainWindow(QMainWindow):
 
         try:
             # If we have current analyzed peaks, store them for future peak-based matching
-            current_peaks = []
-            if hasattr(self, "current_peaks") and self.current_peaks:
-                current_peaks = self.current_peaks
-            elif "peaks" in (getattr(self, "current_result", {}) or {}):
-                current_peaks = self.current_result.get("peaks", [])
+            current_peaks = self._peaks_for_reference_library()
 
             if current_peaks:
                 ref_peaks = [
@@ -1619,6 +1805,14 @@ class MainWindow(QMainWindow):
             ("Data points", str(data_points_count)),
             ("Peaks found", str(len(peaks))),
         ]
+        if self.current_peak_reviews:
+            counts = review_summary(self.current_peak_reviews)
+            summary_rows.extend(
+                [
+                    ("Accepted peaks", str(counts[PEAK_REVIEW_ACCEPTED])),
+                    ("Rejected peaks", str(counts[PEAK_REVIEW_REJECTED])),
+                ]
+            )
 
         baseline_description = (
             self.baseline_method if self.baseline_enabled else "disabled"
@@ -1632,6 +1826,7 @@ class MainWindow(QMainWindow):
             else "disabled"
         )
         parameter_rows = [
+            ("Analysis method", self.current_method_preset_name or "custom"),
             ("Sample rate", f"{self.sample_rate:g} Hz"),
             ("FFT window", self.window_type),
             ("Signal filter", self.filter_type),
@@ -1990,7 +2185,7 @@ class MainWindow(QMainWindow):
                 "data_type": self.data_type,
                 "peak_frequency_tolerance_hz": self.peak_frequency_tolerance,
             }
-            write_peaks_csv(file, peaks, metadata)
+            write_peaks_csv(file, peaks, metadata, self.current_peak_reviews)
 
             QMessageBox.information(self, "Success", f"Peak list saved:\n{file}")
             remember_last_directory(self.settings, file)

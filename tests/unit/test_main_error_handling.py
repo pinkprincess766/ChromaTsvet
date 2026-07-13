@@ -16,6 +16,11 @@ from PyQt5.QtWidgets import QApplication, QMessageBox
 
 import python_analyzer.main as main
 from python_analyzer.analysis.models import ReferencePeak
+from python_analyzer.analysis.peak_review import (
+    PEAK_REVIEW_ACCEPTED,
+    PEAK_REVIEW_REJECTED,
+    PeakReview,
+)
 from python_analyzer.core.identification import (
     MatchResult,
     SpectrumIdentifier,
@@ -595,6 +600,8 @@ class MainWindowErrorHandlingTest(unittest.TestCase):
                 "width_hz",
                 "area",
                 "snr",
+                "review_status",
+                "review_reason",
             ],
         )
         self.assertEqual(
@@ -618,6 +625,8 @@ class MainWindowErrorHandlingTest(unittest.TestCase):
                 "6.15",
                 "4.21",
                 "18.7",
+                "accepted",
+                "accepted",
             ],
         )
         self.assertIn("Peak list exported:", self.window.log_history[-1])
@@ -655,12 +664,103 @@ class MainWindowErrorHandlingTest(unittest.TestCase):
         self.assertEqual(self.window.peak_table.item(0, 1).text(), "12")
         self.assertEqual(self.window.peak_table.item(0, 2).text(), "0.42")
         self.assertEqual(self.window.peak_table.item(0, 4).text(), "1.25")
+        self.assertEqual(self.window.peak_table.item(0, 8).text(), "accepted")
         self.assertEqual(self.window.peak_table.item(1, 0).text(), "12.25")
         self.assertEqual(self.window.results_tabs.tabText(0), "Detected Peaks (2)")
         self.assertGreaterEqual(
             len(self.window.plot.getPlotItem().listDataItems()),
             2,
         )
+
+    def test_method_preset_can_be_saved_and_applied(self):
+        self.window.set_analysis_settings(
+            baseline_enabled=True,
+            baseline_method="improved",
+            peak_threshold=0.02,
+            peak_prominence=0.4,
+            peak_distance=6,
+            peak_min_snr=12.0,
+            filter_type="none",
+            filter_params={},
+            sample_rate=2500.0,
+            window_type="hamming",
+            normalize_area=True,
+            spectrum_smoothing_enabled=True,
+            spectrum_smoothing_method="median",
+            spectrum_smoothing_window=11,
+            peak_frequency_tolerance=2.0,
+            data_type="raman",
+        )
+
+        saved_name = self.window.save_current_method_preset(" Raman QC ")
+        self.window.set_analysis_settings(
+            baseline_enabled=False,
+            baseline_method="simple",
+            peak_threshold=0.5,
+            peak_prominence=0.0,
+            peak_distance=1,
+            filter_type="median",
+            filter_params={"window_size": 5},
+            sample_rate=1000.0,
+            window_type="rectangular",
+            normalize_area=False,
+            peak_frequency_tolerance=10.0,
+            data_type="generic",
+        )
+
+        self.assertEqual(saved_name, "Raman QC")
+        self.assertIn("Raman QC", self.window.list_method_presets())
+        self.assertTrue(self.window.apply_method_preset("Raman QC"))
+        self.assertEqual(self.window.sample_rate, 2500.0)
+        self.assertEqual(self.window.window_type, "hamming")
+        self.assertEqual(self.window.data_type, "raman")
+        self.assertEqual(self.window.current_method_preset_name, "Raman QC")
+
+    def test_rejected_peak_is_not_stored_in_reference_library(self):
+        accepted_peak = SimpleNamespace(
+            frequency=10.0,
+            intensity=1.0,
+            width=2.0,
+            width_hz=1.0,
+            area=3.0,
+            snr=20.0,
+        )
+        rejected_peak = SimpleNamespace(
+            frequency=20.0,
+            intensity=0.5,
+            width=2.0,
+            width_hz=1.0,
+            area=1.0,
+            snr=4.0,
+        )
+        self.window.current_peaks = [accepted_peak, rejected_peak]
+        self.window.current_peak_reviews = [
+            PeakReview(PEAK_REVIEW_ACCEPTED, "accepted"),
+            PeakReview(PEAK_REVIEW_REJECTED, "rejected by user", user_modified=True),
+        ]
+
+        with (
+            patch.object(
+                main.QInputDialog,
+                "getText",
+                side_effect=[
+                    ("Water", True),
+                    ("H2O", True),
+                    ("1.0, 2.0", True),
+                ],
+            ),
+            patch.object(
+                self.window.identifier,
+                "add_reference",
+                return_value=True,
+            ) as add_reference,
+            patch.object(QMessageBox, "information", return_value=QMessageBox.Ok),
+        ):
+            self.window.add_substance()
+
+        add_reference.assert_called_once()
+        self.assertEqual(len(add_reference.call_args.kwargs["peaks"]), 1)
+        self.assertEqual(add_reference.call_args.kwargs["peaks"][0].frequency, 10.0)
 
     def test_plot_mouse_zoom_is_enabled(self):
         view_box = self.window.plot.getPlotItem().getViewBox()
