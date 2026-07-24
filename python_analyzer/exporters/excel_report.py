@@ -33,6 +33,11 @@ class ExcelReportExporter:
             workbook.create_sheet("Parameters"),
             report_data.parameter_rows,
         )
+        if report_data.processing_passport_rows:
+            self._write_key_value_sheet(
+                workbook.create_sheet("Processing Passport"),
+                report_data.processing_passport_rows,
+            )
         self._write_peaks_sheet(workbook.create_sheet("Peaks"), report_data.peaks)
         self._write_matches_sheet(workbook.create_sheet("Matches"), report_data.matches)
 

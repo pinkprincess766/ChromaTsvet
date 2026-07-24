@@ -55,8 +55,20 @@ class HTMLReportExporter:
         plot_html = self._render_plot(plot_image_path)
         summary_rows = self._render_key_value_rows(report_data.summary_rows)
         parameter_rows = self._render_key_value_rows(report_data.parameter_rows)
+        passport_rows = self._render_key_value_rows(
+            report_data.processing_passport_rows
+        )
         peak_rows = self._render_peak_rows(report_data.peaks)
         match_rows = self._render_match_rows(report_data.matches)
+        passport_section = (
+            f"""
+    <section>
+      <h2>Processing Passport</h2>
+      <table><tbody>{passport_rows}</tbody></table>
+    </section>"""
+            if report_data.processing_passport_rows
+            else ""
+        )
 
         return f"""<!doctype html>
 <html lang="en">
@@ -136,6 +148,7 @@ class HTMLReportExporter:
       <h2>Analysis Parameters</h2>
       <table><tbody>{parameter_rows}</tbody></table>
     </section>
+    {passport_section}
     <section>
       <h2>Spectrum</h2>
       {plot_html}
