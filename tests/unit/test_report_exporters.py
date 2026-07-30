@@ -37,6 +37,11 @@ def sample_report_data():
             ("Baseline", "improved"),
             ("Normalization", "disabled"),
         ],
+        processing_passport_rows=[
+            ("Generated at", "2026-07-24 12:30:00"),
+            ("Analysis method", "Raman QC"),
+            ("Processing warnings", "none"),
+        ],
         peaks=[peak],
         matches=[
             PDFMatchRow(
@@ -70,6 +75,8 @@ class ReportExportersTest(unittest.TestCase):
 
         self.assertIn("ChromaTsvet &lt;Analysis&gt; Report", html)
         self.assertIn("sample.csv", html)
+        self.assertIn("Processing Passport", html)
+        self.assertIn("Raman QC", html)
         self.assertIn("Reference", html)
         self.assertIn("120.5", html)
         self.assertIn("data:image/png;base64,", html)
@@ -99,11 +106,16 @@ class ReportExportersTest(unittest.TestCase):
 
         self.assertEqual(
             workbook.sheetnames,
-            ["Summary", "Parameters", "Peaks", "Matches"],
+            ["Summary", "Parameters", "Processing Passport", "Peaks", "Matches"],
         )
         self.assertEqual(workbook["Summary"]["A2"].value, "Source file")
         self.assertEqual(workbook["Summary"]["B2"].value, "sample.csv")
         self.assertEqual(workbook["Parameters"]["A2"].value, "Sample rate")
+        self.assertEqual(
+            workbook["Processing Passport"]["A3"].value,
+            "Analysis method",
+        )
+        self.assertEqual(workbook["Processing Passport"]["B3"].value, "Raman QC")
         self.assertEqual(workbook["Peaks"]["A2"].value, 120.5)
         self.assertEqual(workbook["Peaks"]["G2"].value, 18.0)
         self.assertEqual(workbook["Matches"]["A2"].value, "Reference")

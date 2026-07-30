@@ -465,10 +465,12 @@ class MainWindowErrorHandlingTest(unittest.TestCase):
 
         self.assertEqual(
             workbook.sheetnames,
-            ["Summary", "Parameters", "Peaks", "Matches"],
+            ["Summary", "Parameters", "Processing Passport", "Peaks", "Matches"],
         )
         self.assertEqual(workbook["Summary"]["A5"].value, "Source file")
         self.assertEqual(workbook["Summary"]["B5"].value, "In-memory data")
+        self.assertEqual(workbook["Processing Passport"]["A1"].value, "Field")
+        self.assertEqual(workbook["Processing Passport"]["A4"].value, "Rust core")
         self.assertIn("Excel workbook created:", self.window.log_history[-1])
 
     def test_graph_png_export_writes_image_and_remembers_directory(self):

@@ -57,6 +57,7 @@ from python_analyzer.analysis.peak_review import (
     review_summary,
     set_peak_review_status,
 )
+from python_analyzer.analysis.processing_passport import build_processing_passport
 from python_analyzer.analysis.runner import run_analysis as run_analysis_pipeline
 from python_analyzer.analysis.windowing import (
     DEFAULT_FFT_WINDOW,
@@ -1797,20 +1798,26 @@ class MainWindow(QMainWindow):
         source_file_name = self.display_source_name()
         data_points_count = len(self.current_data) if self.current_data else 0
         peaks = self.current_result.get("peaks", []) if self.current_result else []
+        generated_at = datetime.now()
+        rust_core_version = spectrometer_rust.get_version()
         summary_rows = [
-            ("Date", f"{datetime.now():%Y-%m-%d %H:%M}"),
+            ("Date", f"{generated_at:%Y-%m-%d %H:%M}"),
             ("App version", APP_VERSION),
-            ("Rust core", spectrometer_rust.get_version()),
+            ("Rust core", rust_core_version),
             ("Source file", source_file_name),
             ("Data points", str(data_points_count)),
             ("Peaks found", str(len(peaks))),
         ]
+        accepted_peaks = None
+        rejected_peaks = None
         if self.current_peak_reviews:
             counts = review_summary(self.current_peak_reviews)
+            accepted_peaks = counts[PEAK_REVIEW_ACCEPTED]
+            rejected_peaks = counts[PEAK_REVIEW_REJECTED]
             summary_rows.extend(
                 [
-                    ("Accepted peaks", str(counts[PEAK_REVIEW_ACCEPTED])),
-                    ("Rejected peaks", str(counts[PEAK_REVIEW_REJECTED])),
+                    ("Accepted peaks", str(accepted_peaks)),
+                    ("Rejected peaks", str(rejected_peaks)),
                 ]
             )
 
@@ -1847,12 +1854,26 @@ class MainWindow(QMainWindow):
             ),
             ("Distance", f"{self.peak_distance} points"),
         ]
+        processing_passport = build_processing_passport(
+            settings=self.analysis_settings,
+            result=self.current_result,
+            source_file_name=source_file_name,
+            data_points_count=data_points_count,
+            peaks_count=len(peaks),
+            app_version=APP_VERSION,
+            rust_core_version=rust_core_version,
+            generated_at=generated_at,
+            method_name=self.current_method_preset_name or "custom",
+            accepted_peaks=accepted_peaks,
+            rejected_peaks=rejected_peaks,
+        )
 
         return PDFReportData(
             title="ChromaTsvet Analysis Report",
             subtitle="Spectral data and chromatogram analysis",
             summary_rows=summary_rows,
             parameter_rows=parameter_rows,
+            processing_passport_rows=list(processing_passport.rows),
             peaks=peaks,
             matches=self._collect_report_matches(),
             source_file_name=source_file_name,

@@ -6,7 +6,7 @@ this module owns only ReportLab drawing.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import errno
 import math
 from pathlib import Path
@@ -63,6 +63,7 @@ class PDFReportData:
     source_file_name: str
     data_points_count: int
     peaks_count: int
+    processing_passport_rows: list[tuple[str, str]] = field(default_factory=list)
 
 
 class PDFReportExporter:
@@ -107,6 +108,7 @@ class PDFReportExporter:
         y = self._start_report(pdf, report_data, logo_path)
         y = self._draw_summary_section(pdf, y, report_data)
         y = self._draw_parameters_section(pdf, y, report_data)
+        y = self._draw_processing_passport_section(pdf, y, report_data)
         y = self._ensure_space(pdf, y, 340)
         y = self._draw_spectrum_section(pdf, y, plot_image_path)
         y = self._draw_peaks_section(pdf, y, report_data.peaks)
@@ -158,6 +160,20 @@ class PDFReportExporter:
         y = self._draw_key_value_rows(pdf, y, report_data.parameter_rows)
         return y - 12
 
+    def _draw_processing_passport_section(
+        self,
+        pdf: canvas.Canvas,
+        y: float,
+        report_data: PDFReportData,
+    ) -> float:
+        if not report_data.processing_passport_rows:
+            return y
+
+        y = self._ensure_space(pdf, y, 190)
+        y = self._draw_section_title(pdf, y, "Processing Passport")
+        y = self._draw_key_value_rows(pdf, y, report_data.processing_passport_rows)
+        return y - 12
+
     def _draw_logo(
         self,
         pdf: canvas.Canvas,
@@ -207,6 +223,8 @@ class PDFReportExporter:
     ) -> float:
         pdf.setFont("Helvetica", 10)
         for label, value in rows:
+            y = self._ensure_row_space(pdf, y, 70)
+            pdf.setFont("Helvetica", 10)
             pdf.drawString(self.margin, y, f"{label}:")
             pdf.drawString(self.margin + 95, y, str(value)[:78])
             y -= 15
