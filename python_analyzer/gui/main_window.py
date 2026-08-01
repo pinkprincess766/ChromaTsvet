@@ -39,6 +39,9 @@ from python_analyzer.core.identification import (
 )
 from python_analyzer.readers import read_spectrum_file, SpectrumFileFormatError
 from python_analyzer.analysis.models import AnalysisSettings, LoadedSpectrum
+from python_analyzer.analysis.manual_peaks import (
+    editable_peak_from_values,
+)
 from python_analyzer.analysis.method_presets import (
     delete_method_preset,
     list_method_preset_names,
@@ -83,6 +86,7 @@ from python_analyzer.gui.log_view import (
     append_log_entry,
     log_level_from_entry,
 )
+from python_analyzer.gui.peak_editor import PeakEditDialog
 from python_analyzer.gui.recent_files import (
     clear_recent_files as clear_recent_file_history,
     forget_recent_file,
@@ -378,6 +382,27 @@ class MainWindow(QMainWindow):
 
         self.results_tabs = QTabWidget()
 
+        peak_tab = QWidget()
+        peak_layout = QVBoxLayout(peak_tab)
+        peak_layout.setContentsMargins(0, 0, 0, 0)
+        peak_layout.setSpacing(6)
+        peak_controls = QHBoxLayout()
+        peak_controls.setSpacing(6)
+        self.btn_add_peak = QPushButton("Add Peak")
+        self.btn_edit_peak = QPushButton("Edit Peak")
+        self.btn_remove_peak = QPushButton("Remove Peak")
+        self.btn_add_peak.setToolTip("Add a user-reviewed peak to the current result")
+        self.btn_edit_peak.setToolTip("Edit the selected peak values")
+        self.btn_remove_peak.setToolTip("Remove the selected peak from the current result")
+        self.btn_add_peak.clicked.connect(self.add_manual_peak)
+        self.btn_edit_peak.clicked.connect(self.edit_selected_peak)
+        self.btn_remove_peak.clicked.connect(self.remove_selected_peak)
+        peak_controls.addWidget(self.btn_add_peak)
+        peak_controls.addWidget(self.btn_edit_peak)
+        peak_controls.addWidget(self.btn_remove_peak)
+        peak_controls.addStretch()
+        peak_layout.addLayout(peak_controls)
+
         self.peak_table = QTableWidget()
         self.peak_table.setColumnCount(9)
         self.peak_table.setHorizontalHeaderLabels(
@@ -397,7 +422,8 @@ class MainWindow(QMainWindow):
         self.peak_table.verticalHeader().setVisible(False)
         self.peak_table.horizontalHeader().setStretchLastSection(True)
         self.peak_table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
-        self.results_tabs.addTab(self.peak_table, "Detected Peaks")
+        peak_layout.addWidget(self.peak_table)
+        self.results_tabs.addTab(peak_tab, "Detected Peaks")
 
         self.table = QTableWidget()
         self.table.setColumnCount(4)
@@ -568,6 +594,10 @@ class MainWindow(QMainWindow):
         self.btn_export_peaks.setToolTip(
             f"Export detected peaks ({self._workflow_shortcut_text('export_peaks')})"
         )
+        if hasattr(self, "btn_add_peak"):
+            self.btn_add_peak.setToolTip("Add a user-reviewed peak to the current result")
+            self.btn_edit_peak.setToolTip("Edit the selected peak values")
+            self.btn_remove_peak.setToolTip("Remove the selected peak from the current result")
         self.btn_library.setToolTip("Inspect and maintain reference library entries")
         self.btn_analysis_settings.setToolTip(
             f"Analysis settings ({self._workflow_shortcut_text('analysis_settings')})"
@@ -1116,6 +1146,11 @@ class MainWindow(QMainWindow):
         )
         self.btn_export_peaks.setEnabled(bool(peaks))
         self.btn_overlay.setEnabled(self.current_result is not None)
+        peak_editing_enabled = self.current_result is not None
+        if hasattr(self, "btn_add_peak"):
+            self.btn_add_peak.setEnabled(peak_editing_enabled)
+            self.btn_edit_peak.setEnabled(peak_editing_enabled)
+            self.btn_remove_peak.setEnabled(peak_editing_enabled)
         if hasattr(self, "export_peaks_action"):
             self.export_peaks_action.setEnabled(bool(peaks))
         if hasattr(self, "load_overlay_action"):
@@ -1249,6 +1284,154 @@ class MainWindow(QMainWindow):
             if item is not None:
                 item.setBackground(color)
 
+    def add_manual_peak(self):
+        if self.current_result is None:
+            self._show_warning(
+                "No analysis results",
+                "Analyze a spectrum before adding manual peaks.",
+                status_message="No analysis results to edit",
+            )
+            return
+
+        dialog = PeakEditDialog(self, title="Add Peak")
+        if dialog.exec() != QDialog.Accepted:
+            return
+
+        try:
+            peak = editable_peak_from_values(**dialog.values(), source="manual")
+        except ValueError as exc:
+            self._show_error(
+                "Invalid peak values",
+                "The manual peak could not be added because one or more values are invalid.",
+                exception=exc,
+                status_message="Manual peak was not added",
+            )
+            return
+
+        self.current_peaks = list(self.current_peaks) + [peak]
+        self.current_peak_reviews = list(self.current_peak_reviews) + [
+            PeakReview(
+                PEAK_REVIEW_MANUAL,
+                "manual peak",
+                ("manual_peak",),
+                user_modified=True,
+            )
+        ]
+        self._refresh_peak_edits("Manual peak added")
+        self.peak_table.setCurrentCell(len(self.current_peaks) - 1, 0)
+
+    def edit_selected_peak(self):
+        row = self._selected_peak_row()
+        if row is None:
+            self._show_warning(
+                "No peak selected",
+                "Select a peak row before editing.",
+                status_message="No peak selected",
+            )
+            return
+
+        dialog = PeakEditDialog(
+            self,
+            peak=self.current_peaks[row],
+            title="Edit Peak",
+        )
+        if dialog.exec() != QDialog.Accepted:
+            return
+
+        try:
+            edited_peak = editable_peak_from_values(
+                **dialog.values(),
+                source="edited",
+            )
+        except ValueError as exc:
+            self._show_error(
+                "Invalid peak values",
+                "The selected peak could not be edited because one or more values are invalid.",
+                exception=exc,
+                status_message="Peak edit was not applied",
+            )
+            return
+
+        self.current_peaks = list(self.current_peaks)
+        self.current_peaks[row] = edited_peak
+        self.current_peak_reviews = self._review_list_for_current_peaks()
+        self.current_peak_reviews[row] = PeakReview(
+            PEAK_REVIEW_MANUAL,
+            "edited by user",
+            ("manual_edit",),
+            user_modified=True,
+        )
+        self._refresh_peak_edits("Peak edited")
+        self.peak_table.setCurrentCell(row, 0)
+
+    def remove_selected_peak(self):
+        row = self._selected_peak_row()
+        if row is None:
+            self._show_warning(
+                "No peak selected",
+                "Select a peak row before removing.",
+                status_message="No peak selected",
+            )
+            return
+
+        answer = QMessageBox.question(
+            self,
+            "Remove peak",
+            "Remove the selected peak from the current analysis result?",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No,
+        )
+        if answer != QMessageBox.Yes:
+            return
+
+        self.current_peaks = list(self.current_peaks)
+        del self.current_peaks[row]
+        reviews = list(self.current_peak_reviews)
+        if len(reviews) == len(self.current_peaks) + 1:
+            del reviews[row]
+        else:
+            reviews = review_peaks(self.current_peaks, self.analysis_settings)
+        self.current_peak_reviews = reviews
+        self._refresh_peak_edits("Peak removed")
+
+    def _selected_peak_row(self):
+        if self.current_result is None or not self.current_peaks:
+            return None
+        row = self.peak_table.currentRow()
+        if 0 <= row < len(self.current_peaks):
+            return row
+        return None
+
+    def _review_list_for_current_peaks(self):
+        reviews = list(self.current_peak_reviews)
+        if len(reviews) != len(self.current_peaks):
+            reviews = review_peaks(self.current_peaks, self.analysis_settings)
+        return reviews
+
+    def _refresh_peak_edits(self, event_label):
+        if len(self.current_peak_reviews) != len(self.current_peaks):
+            self.current_peak_reviews = review_peaks(
+                self.current_peaks,
+                self.analysis_settings,
+            )
+        self.current_result["peaks"] = list(self.current_peaks)
+        spectrum = (
+            self.current_spectrum_values
+            if self.current_spectrum_values is not None
+            else np.asarray(self.current_result.get("spectrum", []), dtype=float)
+        )
+        matches = self._identify_matches(self.current_peaks, spectrum)
+        self._set_peak_table(self.current_peaks, self.current_peak_reviews)
+        self._set_match_table(matches)
+        self._update_result_tab_titles(len(self.current_peaks), len(matches))
+        self._redraw_current_plot()
+        self._update_export_actions()
+        self._update_status_summary()
+        self.log(
+            f"{event_label}. Peaks: {len(self.current_peaks)}",
+            status_message=f"{event_label}. Peaks: {len(self.current_peaks)}",
+        )
+
     def _set_match_table(self, matches):
         self.table.setRowCount(len(matches))
         for row, match in enumerate(matches):
@@ -1265,6 +1448,37 @@ class MainWindow(QMainWindow):
             ]
             for column, value in enumerate(values):
                 self.table.setItem(row, column, self._readonly_table_item(value))
+
+    def _identify_matches(self, peaks, spectrum):
+        """Identify current spectrum, preferring reviewed peak features."""
+
+        if not peaks:
+            return self.identifier.find_matches(spectrum)
+
+        try:
+            tol = getattr(self.analysis_settings, "peak_frequency_tolerance", 5.0)
+            dtype = getattr(self.analysis_settings, "data_type", None)
+            peak_matches = self.identifier.find_peak_matches(
+                peaks,
+                frequency_tolerance=tol,
+                data_type=dtype,
+            )
+            return [
+                MatchResult(
+                    substance_name=m.substance_name,
+                    formula=m.formula,
+                    score=m.score,
+                    compared_points=m.num_matched,
+                )
+                for m in peak_matches
+            ][:10]
+        except Exception as exc:
+            self.log(
+                "Peak-based identification failed; falling back to legacy matching "
+                f"({type(exc).__name__}: {exc})",
+                level="warning",
+            )
+            return self.identifier.find_matches(spectrum)
 
     def load_file(self):
         file, _ = QFileDialog.getOpenFileName(
@@ -1502,34 +1716,7 @@ class MainWindow(QMainWindow):
             self.current_frequency_axis = frequency_axis
             self.current_spectrum_values = spectrum
 
-            # Prefer peak-based matching if peaks are available
-            if peaks:
-                try:
-                    tol = getattr(self.analysis_settings, "peak_frequency_tolerance", 5.0)
-                    dtype = getattr(self.analysis_settings, "data_type", None)
-                    peak_matches = self.identifier.find_peak_matches(
-                        peaks,
-                        frequency_tolerance=tol,
-                        data_type=dtype,
-                    )
-                    matches = [
-                        MatchResult(
-                            substance_name=m.substance_name,
-                            formula=m.formula,
-                            score=m.score,
-                            compared_points=m.num_matched,
-                        )
-                        for m in peak_matches
-                    ][:10]  # limit for UI
-                except Exception as exc:
-                    self.log(
-                        "Peak-based identification failed; falling back to legacy matching "
-                        f"({type(exc).__name__}: {exc})",
-                        level="warning",
-                    )
-                    matches = self.identifier.find_matches(spectrum)
-            else:
-                matches = self.identifier.find_matches(spectrum)
+            matches = self._identify_matches(peaks, spectrum)
 
             self._set_peak_table(peaks, self.current_peak_reviews)
             self._set_match_table(matches)
