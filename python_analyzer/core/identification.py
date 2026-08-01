@@ -297,6 +297,49 @@ class SpectrumIdentifier:
             )
             return False
 
+    def update_reference_metadata(
+        self,
+        reference_id: int,
+        name: str,
+        formula: str = "",
+        data_type: str = "generic",
+    ) -> bool:
+        """Update editable reference metadata without touching stored spectra or peaks."""
+        try:
+            normalized_id = int(reference_id)
+            if normalized_id <= 0:
+                raise ValueError("reference id must be positive")
+
+            clean_name = str(name or "").strip()
+            if not clean_name:
+                raise ValueError("reference name cannot be empty")
+
+            cursor = self.conn.execute(
+                """
+                UPDATE compounds
+                SET name = ?, formula = ?, data_type = ?
+                WHERE id = ?
+                """,
+                (
+                    clean_name,
+                    str(formula or "").strip(),
+                    normalize_data_type(data_type),
+                    normalized_id,
+                ),
+            )
+            self.conn.commit()
+            updated = cursor.rowcount > 0
+            if updated:
+                logger.info("Updated reference substance metadata id=%s", normalized_id)
+            return updated
+        except Exception as exc:
+            logger.error(
+                "Could not update reference substance metadata id=%r (%s)",
+                reference_id,
+                type(exc).__name__,
+            )
+            return False
+
     def restore_default(self):
         """Restore the default reference database."""
         if not self.clear_database():
