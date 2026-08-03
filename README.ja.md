@@ -34,17 +34,20 @@ Python/PyQt による UI と Rust/PyO3 による信号処理コアを組み合�
 git clone https://github.com/pinkprincess766/ChromaTsvet.git
 cd ChromaTsvet
 
-python3 -m venv .venv
-source .venv/bin/activate
-python -m pip install --upgrade pip
-python -m pip install maturin
-python -m pip install -e .
+make setup
+make doctor
+make run
+```
 
-cd rust_module
-maturin develop
-cd ..
+`make setup` は `.venv` を作成し、Python 開発依存関係をインストールし、
+Rust/PyO3 拡張を maturin でビルドします。
 
-chromatsvet
+`make` が使えない環境では Python helper を使えます。
+
+```bash
+python scripts/dev.py setup
+python scripts/dev.py doctor
+python scripts/dev.py run
 ```
 
 従来の直接起動も引き続き利用できます。
@@ -53,10 +56,12 @@ chromatsvet
 python python_analyzer/main.py
 ```
 
-Windows では仮想環境を次のように有効化します。
+Windows では Python helper を使うのが簡単です。
 
 ```bat
-.venv\Scripts\activate
+py scripts\dev.py setup
+py scripts\dev.py doctor
+py scripts\dev.py run
 ```
 
 アプリはデモデータなしで起動します。**Open file** から CSV または TXT ファイルを読み込んでください。
@@ -64,9 +69,8 @@ Windows では仮想環境を次のように有効化します。
 ## テスト
 
 ```bash
-QT_QPA_PLATFORM=offscreen python -m pytest -v
-cd rust_module
-cargo test
+make test
+make rust
 ```
 
 ## 構成
