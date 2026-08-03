@@ -1,7 +1,7 @@
 # ChromaTsvet Development Notes
 
-These notes capture the current engineering workflow for the source-based
-v0.1 line. They intentionally separate correctness, build reproducibility, and
+These notes capture the current engineering workflow for source-based
+development. They intentionally separate correctness, build reproducibility, and
 performance work.
 
 ## Build Model
@@ -11,13 +11,25 @@ ChromaTsvet currently has two build layers:
 1. The Python application package, installed from the repository root.
 2. The Rust/PyO3 extension, built from `rust_module/Cargo.toml` with maturin.
 
-Development setup:
+Recommended development setup:
 
 ```bash
-python -m pip install -e .
-cd rust_module
-maturin develop
-cd ..
+make setup
+make doctor
+```
+
+The same workflow is available without `make`:
+
+```bash
+python scripts/dev.py setup
+python scripts/dev.py doctor
+```
+
+The helper creates `.venv`, installs `.[dev]`, and builds the Rust extension.
+The underlying Rust build command remains explicit:
+
+```bash
+python -m maturin develop --manifest-path rust_module/Cargo.toml
 ```
 
 Release/CI wheel build:
@@ -46,6 +58,12 @@ detector. `process_signal` converts them at the API boundary:
 
 When changing FFT, windows, normalization, or peak detection, update Rust unit
 tests and Python smoke tests together.
+
+Run both test suites from the repository root:
+
+```bash
+make check
+```
 
 ## Performance Work
 

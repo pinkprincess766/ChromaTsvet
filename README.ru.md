@@ -123,17 +123,20 @@ GitHub release notes. Для повторной генерации превью 
 git clone https://github.com/pinkprincess766/ChromaTsvet.git
 cd ChromaTsvet
 
-python3 -m venv .venv
-source .venv/bin/activate
-python -m pip install --upgrade pip
-python -m pip install maturin
-python -m pip install -e .
+make setup
+make doctor
+make run
+```
 
-cd rust_module
-maturin develop
-cd ..
+`make setup` создаёт `.venv`, устанавливает Python-зависимости для разработки и
+собирает Rust/PyO3-расширение через maturin.
 
-chromatsvet
+Если `make` недоступен, используйте тот же workflow напрямую через Python:
+
+```bash
+python scripts/dev.py setup
+python scripts/dev.py doctor
+python scripts/dev.py run
 ```
 
 Установленная консольная команда `chromatsvet` — рекомендуемый способ запуска
@@ -143,15 +146,16 @@ chromatsvet
 python python_analyzer/main.py
 ```
 
-На Windows активируйте виртуальное окружение так:
+На Windows удобнее использовать Python helper:
 
 ```bat
-.venv\Scripts\activate
+py scripts\dev.py setup
+py scripts\dev.py doctor
+py scripts\dev.py run
 ```
 
-После этого выполните те же команды `pip`, `maturin develop` и запустите
-приложение из активированного окружения. Приложение стартует без демоданных;
-используйте **Open file**, чтобы загрузить CSV- или TXT-спектр.
+Приложение стартует без демоданных; используйте **Open file**, чтобы загрузить
+CSV- или TXT-спектр.
 
 ## Входные данные
 
@@ -188,21 +192,24 @@ intensity
 Для разработки и тестов установите опциональные зависимости:
 
 ```bash
-python -m pip install -e ".[test]"
+make setup
 ```
 
 Запуск Python-тестов из корня проекта:
 
 ```bash
-QT_QPA_PLATFORM=offscreen python -m pytest -v
+make test
 ```
 
 Запуск Rust unit tests:
 
 ```bash
-cd rust_module
-cargo test
+make rust
 ```
+
+`make check` запускает оба набора тестов. Низкоуровневые команды всё ещё можно
+использовать напрямую: `QT_QPA_PLATFORM=offscreen python -m pytest -v` и
+`cargo test --manifest-path rust_module/Cargo.toml`.
 
 Запуск детерминированных регрессионных тестов на синтетических спектрах:
 

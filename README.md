@@ -122,17 +122,20 @@ README and GitHub release notes. Regenerating the PDF preview requires either
 git clone https://github.com/pinkprincess766/ChromaTsvet.git
 cd ChromaTsvet
 
-python3 -m venv .venv
-source .venv/bin/activate
-python -m pip install --upgrade pip
-python -m pip install maturin
-python -m pip install -e .
+make setup
+make doctor
+make run
+```
 
-cd rust_module
-maturin develop
-cd ..
+`make setup` creates `.venv`, installs the Python development dependencies, and
+builds the Rust/PyO3 extension with maturin.
 
-chromatsvet
+If `make` is not available, use the same workflow through Python:
+
+```bash
+python scripts/dev.py setup
+python scripts/dev.py doctor
+python scripts/dev.py run
 ```
 
 The installed console entry point is the recommended way to start the
@@ -142,15 +145,16 @@ application. The historical direct script invocation is still supported:
 python python_analyzer/main.py
 ```
 
-On Windows, activate the environment with:
+On Windows, prefer the Python helper:
 
 ```bat
-.venv\Scripts\activate
+py scripts\dev.py setup
+py scripts\dev.py doctor
+py scripts\dev.py run
 ```
 
-Then run the same `pip`, `maturin develop`, and application commands from the
-activated environment. The application starts without demo data; use **Open
-file** to load a CSV or TXT spectrum.
+The application starts without demo data; use **Open file** to load a CSV or TXT
+spectrum.
 
 ## Input Data
 
@@ -186,21 +190,24 @@ sample rate is required to convert FFT bins into physical frequency values.
 For development and tests, install the optional test dependencies:
 
 ```bash
-python -m pip install -e ".[test]"
+make setup
 ```
 
 Run the Python test suite from the project root:
 
 ```bash
-QT_QPA_PLATFORM=offscreen python -m pytest -v
+make test
 ```
 
 Run the Rust unit tests:
 
 ```bash
-cd rust_module
-cargo test
+make rust
 ```
+
+`make check` runs both suites. The raw commands are still available when needed:
+`QT_QPA_PLATFORM=offscreen python -m pytest -v` and
+`cargo test --manifest-path rust_module/Cargo.toml`.
 
 Run the deterministic synthetic spectrum regression tests:
 
