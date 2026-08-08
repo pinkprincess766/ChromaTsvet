@@ -189,3 +189,18 @@ class SpectrumReaderTest(unittest.TestCase):
 
             with self.assertRaises(csv.Error):
                 read_spectrum_file(file_path)
+
+    def test_alpha_sample_files_remain_parseable(self):
+        examples_dir = Path(__file__).resolve().parents[2] / "examples" / "alpha"
+        expected_lengths = {
+            "clean_three_peaks.csv": 41,
+            "decimal_comma_semicolon.txt": 23,
+            "noisy_overlap.csv": 36,
+        }
+
+        for file_name, expected_length in expected_lengths.items():
+            with self.subTest(file_name=file_name):
+                data, skipped_rows = read_spectrum_file(examples_dir / file_name)
+
+                self.assertEqual(len(data), expected_length)
+                self.assertEqual(skipped_rows, [])
