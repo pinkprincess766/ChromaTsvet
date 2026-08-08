@@ -1,0 +1,64 @@
+name: Bug report
+description: Report a reproducible ChromaTsvet problem.
+title: "[Bug]: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for testing ChromaTsvet. Please do not include private local paths, tokens, confidential sample names, patient data, or unpublished laboratory identifiers.
+  - type: input
+    id: version
+    attributes:
+      label: ChromaTsvet version or commit
+      placeholder: "v0.2.0, main, or a commit hash"
+    validations:
+      required: true
+  - type: dropdown
+    id: operating-system
+    attributes:
+      label: Operating system
+      options:
+        - macOS
+        - Windows
+        - Linux
+        - Other
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: List the smallest steps that trigger the problem.
+      placeholder: |
+        1. Open ...
+        2. Set ...
+        3. Click ...
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+    validations:
+      required: true
+  - type: textarea
+    id: data-format
+    attributes:
+      label: Input data format
+      description: Describe the file shape and delimiter. Do not paste sensitive data.
+      placeholder: "CSV, two columns, semicolon delimiter, decimal comma, about 1200 rows"
+  - type: checkboxes
+    id: reproduction
+    attributes:
+      label: Reproduction checks
+      options:
+        - label: I tried a file from examples/alpha if the issue is import or analysis related.
+        - label: I removed private paths or confidential identifiers from this report.
+

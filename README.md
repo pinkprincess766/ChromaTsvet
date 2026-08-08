@@ -34,6 +34,10 @@ settings, and richer report export. It is ready for local experiments,
 demonstrations, and iterative scientific tooling work, but it is not yet a
 validated laboratory instrument.
 
+For guided closed-alpha testing, see the [Alpha Testing Guide](docs/testing_guide.md).
+The guide includes safe synthetic sample files, a manual verification checklist,
+and reporting instructions for testers.
+
 Continuous integration runs the Python and Rust test suites. The Python tests
 now use pytest, and the project includes deterministic synthetic spectra for
 regression checks around peak detection. Peak-based identification is available
@@ -155,6 +159,9 @@ py scripts\dev.py run
 
 The application starts without demo data; use **Open file** to load a CSV or TXT
 spectrum.
+
+Synthetic smoke-test inputs are available in `examples/alpha/` for testers who
+want to verify import, analysis, plotting, and export without using private data.
 
 ## Input Data
 
