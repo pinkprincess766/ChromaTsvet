@@ -147,6 +147,53 @@ class MainWindowErrorHandlingTest(unittest.TestCase):
         self.assertIn("RuntimeError: Rust failure", self.window.log_history[-1])
         self.assertEqual(self.window.status_bar.currentMessage(), "Spectrum analysis failed")
 
+    def test_processing_warnings_are_reported_in_analysis_console(self):
+        self.process_signal.return_value = {
+            "spectrum": [0.0, 1.0],
+            "peaks": [],
+            "processing_warnings": [
+                "area_normalization_skipped",
+                "/home/scientist/private/raw.csv",
+            ],
+        }
+
+        self.window.run_analysis()
+
+        log_text = "\n".join(self.window.log_history)
+        self.assertIn("Processing warning", log_text)
+        self.assertIn("area normalization was skipped", log_text)
+        self.assertIn("Rust reported '.../raw.csv'", log_text)
+        self.assertNotIn("/home/scientist/private", log_text)
+
+    def test_peak_review_warnings_are_reported_in_analysis_console(self):
+        weak_peak = SimpleNamespace(
+            position=1.0,
+            frequency=250.0,
+            intensity=1.0,
+            prominence=0.1,
+            baseline_level=0.0,
+            left_base=0.0,
+            right_base=0.0,
+            width=0.0,
+            width_hz=0.0,
+            area=0.0,
+            noise=0.1,
+            snr=1.0,
+            is_global_max=False,
+        )
+        self.process_signal.return_value = {
+            "spectrum": [0.0, 1.0],
+            "peaks": [weak_peak],
+        }
+
+        self.window.run_analysis()
+
+        log_text = "\n".join(self.window.log_history)
+        self.assertIn("Peak review", log_text)
+        self.assertIn("1 peak requires attention", log_text)
+        self.assertIn("low SNR", log_text)
+        self.assertIn("unknown width", log_text)
+
     def test_file_read_failure_is_reported_without_raising(self):
         missing_file = "/tmp/chromatsvet-file-that-does-not-exist.csv"
 

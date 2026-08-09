@@ -76,6 +76,11 @@ from python_analyzer.exporters import (
 )
 from python_analyzer.viz.spectrum_plot import SpectrumPlot
 from python_analyzer.gui.dialogs import SettingsDialog, LogWindow, AnalysisSettingsDialog
+from python_analyzer.gui.diagnostics import (
+    peak_review_messages,
+    processing_warning_messages,
+    skipped_rows_message,
+)
 from python_analyzer.gui.error_messages import (
     display_file_label,
     safe_exception_details,
@@ -320,7 +325,7 @@ class MainWindow(QMainWindow):
         self.btn_export = QPushButton("📄 PDF Report")
         self.btn_export_peaks = QPushButton("Export Peaks (CSV)")
         self.btn_analysis_settings = QPushButton("Analysis Settings")
-        self.btn_log = QPushButton("Log")
+        self.btn_log = QPushButton("Console")
         self.btn_settings = QPushButton("⚙ Settings")
         self.logo_label = QLabel()
         self.logo_label.setObjectName("appLogo")
@@ -447,10 +452,10 @@ class MainWindow(QMainWindow):
 
         log_controls = QHBoxLayout()
         log_controls.setSpacing(6)
-        log_title = QLabel("Application Log")
+        log_title = QLabel("Analysis Console")
         log_title.setStyleSheet("font-weight: 600;")
         self.log_clear_button = QPushButton("Clear")
-        self.log_copy_button = QPushButton("Copy")
+        self.log_copy_button = QPushButton("Copy diagnostics")
         self.log_autoscroll_checkbox = QCheckBox("Auto-scroll")
         self.log_autoscroll_checkbox.setChecked(True)
         self.log_clear_button.clicked.connect(self.clear_log)
@@ -466,7 +471,7 @@ class MainWindow(QMainWindow):
         self.embedded_log_view.setReadOnly(True)
         self.embedded_log_view.setMinimumHeight(78)
         self.embedded_log_view.setFont(QFontDatabase.systemFont(QFontDatabase.FixedFont))
-        self.embedded_log_view.setAccessibleName("Application log")
+        self.embedded_log_view.setAccessibleName("Analysis console")
         log_layout.addWidget(self.embedded_log_view)
         main_layout.addWidget(self.log_panel)
 
@@ -1545,6 +1550,11 @@ class MainWindow(QMainWindow):
             return None
 
         if skipped_rows:
+            diagnostic_message = skipped_rows_message(
+                file_label,
+                valid_points=len(data),
+                skipped_rows=skipped_rows,
+            )
             examples = "\n".join(
                 f"Line {line_no}: {value}" for line_no, value in skipped_rows[:5]
             )
@@ -1553,10 +1563,7 @@ class MainWindow(QMainWindow):
                 f"Loaded points: {len(data)}\n"
                 f"Skipped rows: {len(skipped_rows)}\n\n"
                 f"Problematic values:\n{examples}",
-                log_message=(
-                    f"Loaded {file_label} with {len(skipped_rows)} skipped rows "
-                    f"and {len(data)} valid points"
-                ),
+                log_message=diagnostic_message,
                 status_message=f"Loaded with {len(skipped_rows)} skipped rows",
             )
 
@@ -1717,6 +1724,7 @@ class MainWindow(QMainWindow):
             self.current_spectrum_values = spectrum
 
             matches = self._identify_matches(peaks, spectrum)
+            self._log_analysis_diagnostics(result, self.current_peak_reviews)
 
             self._set_peak_table(peaks, self.current_peak_reviews)
             self._set_match_table(matches)
@@ -1747,6 +1755,13 @@ class MainWindow(QMainWindow):
             status_message=f"{source_name} | Analysis done. Peaks: {len(peaks)}",
         )
 
+    def _log_analysis_diagnostics(self, result, peak_reviews):
+        for message in processing_warning_messages(result):
+            self.log(message, level="warning")
+
+        for message in peak_review_messages(peak_reviews):
+            self.log(message, level="warning")
+
     def _analyze_overlay_spectrum(self):
         if self.overlay_data is None:
             return True
@@ -1763,6 +1778,11 @@ class MainWindow(QMainWindow):
                 sample_rate=self.sample_rate,
                 source_signal_len=len(self.overlay_data),
             )
+            for message in processing_warning_messages(
+                result,
+                source_label="Overlay processing",
+            ):
+                self.log(message, level="warning")
         except filters.FilterError as exc:
             self.overlay_result = None
             self.overlay_frequency_axis = None
