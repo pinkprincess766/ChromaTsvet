@@ -132,7 +132,7 @@ class LogWindow(QDialog):
     def __init__(self, parent):
         super().__init__(parent)
         self.main_window = parent
-        self.setWindowTitle("ChromaTsvet Log")
+        self.setWindowTitle("ChromaTsvet Analysis Console")
         self.resize(760, 460)
 
         layout = QVBoxLayout(self)
@@ -148,8 +148,8 @@ class LogWindow(QDialog):
             self.append_entry(entry, log_level_from_entry(entry))
 
         buttons = QHBoxLayout()
-        clear_button = QPushButton("Clear log")
-        copy_button = QPushButton("Copy all")
+        clear_button = QPushButton("Clear")
+        copy_button = QPushButton("Copy diagnostics")
         close_button = QPushButton("Close")
         clear_button.clicked.connect(parent.clear_log)
         copy_button.clicked.connect(self.copy_all)
