@@ -25,6 +25,11 @@ PEAK_REVIEW_STATUSES = (
 )
 
 DEFAULT_LOW_SNR_WARNING = 3.0
+OVERLAP_DISTANCE_WIDTH_FACTOR = 1.25
+SHOULDER_DISTANCE_WIDTH_FACTOR = 2.0
+SHOULDER_STRENGTH_RATIO = 0.35
+POSSIBLE_OVERLAP_FLAG = "possible overlap"
+POSSIBLE_SHOULDER_FLAG = "possible shoulder"
 
 
 @dataclass(frozen=True)
@@ -40,15 +45,21 @@ class PeakReview:
 def review_peaks(peaks: Iterable[Any], settings: Any | None = None) -> list[PeakReview]:
     """Return review diagnostics for a sequence of detected peaks."""
 
+    peak_list = list(peaks)
     min_snr = _finite_setting(settings, "peak_min_snr", 0.0)
     min_prominence = _finite_setting(settings, "peak_prominence", 0.0)
-    return [
+    reviews = [
         review_peak(
             peak,
             min_snr=min_snr,
             min_prominence=min_prominence,
         )
-        for peak in peaks
+        for peak in peak_list
+    ]
+    overlap_flags = _overlap_review_flags(peak_list, reviews)
+    return [
+        _merge_review_flags(review, flags)
+        for review, flags in zip(reviews, overlap_flags)
     ]
 
 
@@ -182,3 +193,93 @@ def _peak_frequency(peak: Any) -> float | None:
     if frequency is not None:
         return frequency
     return _finite_attr(peak, "position")
+
+
+def _overlap_review_flags(
+    peaks: list[Any],
+    reviews: list[PeakReview],
+) -> list[list[str]]:
+    """Return conservative overlap/shoulder flags for neighboring peaks.
+
+    This is a review heuristic, not deconvolution: it warns humans when two
+    already-detected peaks are closer than their measured widths can justify.
+    """
+
+    flags = [[] for _ in peaks]
+    measurable_peaks: list[tuple[int, float, float, float | None]] = []
+    for index, (peak, review) in enumerate(zip(peaks, reviews)):
+        if review.status == PEAK_REVIEW_REJECTED:
+            continue
+        coordinate_and_width = _overlap_coordinate_and_width(peak)
+        if coordinate_and_width is None:
+            continue
+        coordinate, width = coordinate_and_width
+        measurable_peaks.append((index, coordinate, width, _peak_strength(peak)))
+
+    measurable_peaks.sort(key=lambda item: item[1])
+    for left, right in zip(measurable_peaks, measurable_peaks[1:]):
+        left_index, left_coordinate, left_width, left_strength = left
+        right_index, right_coordinate, right_width, right_strength = right
+        distance = abs(right_coordinate - left_coordinate)
+        average_width = (left_width + right_width) * 0.5
+        if average_width <= 0.0:
+            continue
+
+        if distance <= average_width * OVERLAP_DISTANCE_WIDTH_FACTOR:
+            flags[left_index].append(POSSIBLE_OVERLAP_FLAG)
+            flags[right_index].append(POSSIBLE_OVERLAP_FLAG)
+            continue
+
+        if distance > average_width * SHOULDER_DISTANCE_WIDTH_FACTOR:
+            continue
+        if left_strength is None or right_strength is None:
+            continue
+
+        weak_strength = min(left_strength, right_strength)
+        strong_strength = max(left_strength, right_strength)
+        if strong_strength <= 0.0:
+            continue
+        if weak_strength / strong_strength <= SHOULDER_STRENGTH_RATIO:
+            weak_index = left_index if left_strength <= right_strength else right_index
+            flags[weak_index].append(POSSIBLE_SHOULDER_FLAG)
+
+    return flags
+
+
+def _overlap_coordinate_and_width(peak: Any) -> tuple[float, float] | None:
+    frequency = _finite_attr(peak, "frequency")
+    width_hz = _finite_attr(peak, "width_hz")
+    if frequency is not None and width_hz is not None and width_hz > 0.0:
+        return frequency, width_hz
+
+    position = _finite_attr(peak, "position")
+    width = _finite_attr(peak, "width")
+    if position is not None and width is not None and width > 0.0:
+        return position, width
+    return None
+
+
+def _peak_strength(peak: Any) -> float | None:
+    prominence = _finite_attr(peak, "prominence")
+    if prominence is not None and prominence > 0.0:
+        return prominence
+
+    intensity = _finite_attr(peak, "intensity")
+    if intensity is not None and intensity > 0.0:
+        return intensity
+    return None
+
+
+def _merge_review_flags(review: PeakReview, flags: list[str]) -> PeakReview:
+    if not flags:
+        return review
+    if review.status == PEAK_REVIEW_REJECTED:
+        return review
+
+    merged_flags = tuple(dict.fromkeys([*review.flags, *flags]))
+    return PeakReview(
+        PEAK_REVIEW_SUSPICIOUS,
+        "; ".join(merged_flags),
+        merged_flags,
+        user_modified=review.user_modified,
+    )
