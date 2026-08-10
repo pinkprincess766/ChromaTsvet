@@ -62,6 +62,15 @@ from python_analyzer.analysis.peak_review import (
 )
 from python_analyzer.analysis.processing_passport import build_processing_passport
 from python_analyzer.analysis.runner import run_analysis as run_analysis_pipeline
+from python_analyzer.analysis.session_bundle import (
+    SESSION_FILE_FILTER,
+    SESSION_SUFFIX,
+    SessionFormatError,
+    build_analysis_session_payload,
+    read_analysis_session,
+    session_output_path,
+    write_analysis_session,
+)
 from python_analyzer.analysis.windowing import (
     DEFAULT_FFT_WINDOW,
     normalize_fft_window_type,
@@ -222,8 +231,10 @@ class MainWindow(QMainWindow):
         self.current_result = None
         self.current_peaks = []
         self.current_peak_reviews: list[PeakReview] = []
+        self.current_matches = []
         self.current_file_name = None
         self.current_file_path = None
+        self.current_data_points_count = 0
         self.current_spectrum: LoadedSpectrum | None = None
         self.current_frequency_axis = None
         self.current_spectrum_values = None
@@ -501,6 +512,16 @@ class MainWindow(QMainWindow):
             "Open a CSV or TXT spectrum file",
         )
         file_menu.addAction(self.open_file_action)
+
+        self.open_session_action = QAction("Open Analysis Session...", self)
+        self.open_session_action.setStatusTip("Open a saved ChromaTsvet analysis session")
+        self.open_session_action.triggered.connect(self.open_analysis_session_file)
+        self.save_session_action = QAction("Save Analysis Session...", self)
+        self.save_session_action.setStatusTip("Save the current analysis state")
+        self.save_session_action.triggered.connect(self.save_analysis_session)
+        file_menu.addAction(self.open_session_action)
+        file_menu.addAction(self.save_session_action)
+        file_menu.addSeparator()
 
         self.load_overlay_action = QAction("Load Overlay Spectrum...", self)
         self.load_overlay_action.setStatusTip("Load a second spectrum and overlay it on the current graph")
@@ -1087,7 +1108,11 @@ class MainWindow(QMainWindow):
         self._update_status_summary()
 
     def _update_status_summary(self):
-        point_count = len(self.current_data) if self.current_data is not None else 0
+        point_count = (
+            len(self.current_data)
+            if self.current_data is not None
+            else self.current_data_points_count
+        )
         peaks = (
             self.current_result.get("peaks", [])
             if self.current_result is not None
@@ -1100,9 +1125,7 @@ class MainWindow(QMainWindow):
             else ""
         )
 
-        if self.current_data is None:
-            status_text = "No data | idle"
-        elif self.current_result is not None:
+        if self.current_result is not None:
             review_counts = review_summary(self.current_peak_reviews)
             review_suffix = ""
             if self.current_peak_reviews:
@@ -1111,9 +1134,11 @@ class MainWindow(QMainWindow):
                     f"rejected={review_counts[PEAK_REVIEW_REJECTED]}"
                 )
             status_text = (
-                f"{point_count} points | {peak_count} peaks | analyzed | "
+                f"{point_count} points | {peak_count} peaks | {self.analysis_status} | "
                 f"threshold={self.peak_threshold:.3f}{review_suffix}{overlay_suffix}"
             )
+        elif self.current_data is None:
+            status_text = "No data | idle"
         else:
             status_text = f"{point_count} points | {self.analysis_status}{overlay_suffix}"
 
@@ -1158,6 +1183,8 @@ class MainWindow(QMainWindow):
             self.btn_remove_peak.setEnabled(peak_editing_enabled)
         if hasattr(self, "export_peaks_action"):
             self.export_peaks_action.setEnabled(bool(peaks))
+        if hasattr(self, "save_session_action"):
+            self.save_session_action.setEnabled(self.current_result is not None)
         if hasattr(self, "load_overlay_action"):
             self.load_overlay_action.setEnabled(self.current_result is not None)
         if hasattr(self, "clear_overlay_action"):
@@ -1438,8 +1465,9 @@ class MainWindow(QMainWindow):
         )
 
     def _set_match_table(self, matches):
+        self.current_matches = list(matches)
         self.table.setRowCount(len(matches))
-        for row, match in enumerate(matches):
+        for row, match in enumerate(self.current_matches):
             compared_points = getattr(
                 match,
                 "compared_points",
@@ -1577,9 +1605,11 @@ class MainWindow(QMainWindow):
         self.current_data = data
         self.current_file_name = file_path.name
         self.current_file_path = str(file_path.resolve())
+        self.current_data_points_count = len(data)
         self.current_result = None
         self.current_peaks = []
         self.current_peak_reviews = []
+        self.current_matches = []
         self.current_frequency_axis = None
         self.current_spectrum_values = None
         self._reset_overlay_state()
@@ -1674,6 +1704,7 @@ class MainWindow(QMainWindow):
         self.current_result = None
         self.current_peaks = []
         self.current_peak_reviews = []
+        self.current_matches = []
         self.analysis_status = "analyzing"
         self._update_status_summary()
         self._set_peak_table([])
@@ -2003,7 +2034,11 @@ class MainWindow(QMainWindow):
 
     def _build_report_data(self):
         source_file_name = self.display_source_name()
-        data_points_count = len(self.current_data) if self.current_data else 0
+        data_points_count = (
+            len(self.current_data)
+            if self.current_data
+            else self.current_data_points_count
+        )
         peaks = self.current_result.get("peaks", []) if self.current_result else []
         generated_at = datetime.now()
         rust_core_version = spectrometer_rust.get_version()
@@ -2114,6 +2149,179 @@ class MainWindow(QMainWindow):
                 status_message="Temporary report file could not be removed",
                 level="warning",
             )
+
+    def save_analysis_session(self):
+        if not self.current_result:
+            self._show_warning(
+                "No analysis results",
+                "Analyze a spectrum before saving an analysis session.",
+                status_message="No analysis results to save",
+            )
+            return
+
+        file, _ = QFileDialog.getSaveFileName(
+            self,
+            "Save analysis session",
+            suggested_dialog_path(
+                self.settings,
+                f"session_{datetime.now():%Y%m%d_%H%M}{SESSION_SUFFIX}",
+            ),
+            SESSION_FILE_FILTER,
+        )
+        if not file:
+            return
+
+        output_file = session_output_path(file)
+        try:
+            report_data = self._build_report_data()
+            payload = build_analysis_session_payload(
+                source_file_name=self.display_source_name(),
+                data_points_count=report_data.data_points_count,
+                settings=self.analysis_settings,
+                method_name=self.current_method_preset_name or "custom",
+                result=self.current_result,
+                frequency_axis=(
+                    self.current_frequency_axis
+                    if self.current_frequency_axis is not None
+                    else []
+                ),
+                spectrum=(
+                    self.current_spectrum_values
+                    if self.current_spectrum_values is not None
+                    else []
+                ),
+                peaks=self.current_peaks,
+                peak_reviews=self.current_peak_reviews,
+                matches=self.current_matches,
+                app_version=APP_VERSION,
+                rust_core_version=spectrometer_rust.get_version(),
+                processing_passport_rows=report_data.processing_passport_rows,
+            )
+            write_analysis_session(output_file, payload)
+
+            QMessageBox.information(self, "Success", f"Analysis session saved:\n{output_file}")
+            remember_last_directory(self.settings, output_file)
+            self.log(
+                f"Analysis session saved: {display_file_label(output_file)}",
+                status_message=f"Session saved: {Path(output_file).name}",
+            )
+        except PermissionError as exc:
+            self._show_error(
+                "Could not save session",
+                "The analysis session could not be saved because access to the selected location was denied.",
+                exception=exc,
+                status_message="Analysis session was not saved",
+            )
+        except SessionFormatError as exc:
+            self._show_error(
+                "Could not prepare session",
+                "The current analysis state could not be saved as a session.",
+                exception=exc,
+                status_message="Analysis session was not saved",
+            )
+        except Exception as exc:
+            self._show_error(
+                "Could not save session",
+                "The analysis session could not be saved. Choose another location and try again.",
+                exception=exc,
+                critical=True,
+                status_message="Analysis session save failed",
+            )
+
+    def open_analysis_session_file(self):
+        file, _ = QFileDialog.getOpenFileName(
+            self,
+            "Open analysis session",
+            load_last_directory(self.settings),
+            SESSION_FILE_FILTER,
+        )
+        if not file:
+            return
+
+        try:
+            session = read_analysis_session(file)
+            self._restore_analysis_session(session)
+            remember_last_directory(self.settings, file)
+            self.log(
+                f"Analysis session loaded: {display_file_label(file)}",
+                status_message=f"Session loaded: {Path(file).name}",
+            )
+        except SessionFormatError as exc:
+            self._show_error(
+                "Invalid analysis session",
+                "The selected session file could not be loaded. It may be corrupt or from an unsupported version.",
+                exception=exc,
+                status_message="Invalid analysis session",
+            )
+        except PermissionError as exc:
+            self._show_error(
+                "Could not open session",
+                "ChromaTsvet does not have permission to read this session file.",
+                exception=exc,
+                status_message="Analysis session permission error",
+            )
+        except OSError as exc:
+            self._show_error(
+                "Could not open session",
+                "The selected analysis session could not be read.",
+                exception=exc,
+                status_message="Could not read analysis session",
+            )
+        except Exception as exc:
+            self._show_error(
+                "Could not open session",
+                "The analysis session could not be opened.",
+                exception=exc,
+                critical=True,
+                status_message="Analysis session load failed",
+            )
+
+    def _restore_analysis_session(self, session):
+        result_payload = dict(session["result"])
+        peaks = list(result_payload.pop("peaks"))
+        reviews = list(result_payload.pop("peak_reviews"))
+        matches = list(result_payload.pop("matches"))
+
+        self.current_data = None
+        self.current_data_points_count = session["data_points_count"]
+        self.current_file_name = session["source_file_name"]
+        self.current_file_path = None
+        self.current_spectrum = LoadedSpectrum(
+            data=[],
+            file_path=None,
+            file_name=self.current_file_name,
+        )
+        self._reset_overlay_state()
+
+        self.current_frequency_axis = np.asarray(
+            result_payload.get("frequency_axis", []),
+            dtype=float,
+        )
+        self.current_spectrum_values = np.asarray(
+            result_payload.get("spectrum", []),
+            dtype=float,
+        )
+        self.current_result = {
+            **result_payload,
+            "peaks": peaks,
+            "processing_warnings": session.get("processing_warnings", []),
+        }
+        self.current_peaks = peaks
+        self.current_peak_reviews = reviews
+        self.analysis_status = "session loaded"
+        self._apply_analysis_settings_model(
+            session["settings"],
+            method_preset_name=(
+                "" if session.get("method_name") == "custom" else session.get("method_name", "")
+            ),
+        )
+        self._set_peak_table(peaks, reviews)
+        self._set_match_table(matches)
+        self._update_result_tab_titles(len(peaks), len(matches))
+        self._redraw_current_plot()
+        self._update_file_display()
+        self._update_export_actions()
+        self._update_status_summary()
 
     def _path_with_default_suffix(self, file_path, suffix):
         path = Path(file_path)
