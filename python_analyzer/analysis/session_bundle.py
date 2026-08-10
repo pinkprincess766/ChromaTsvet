@@ -26,6 +26,7 @@ from python_analyzer.analysis.peak_review import (
     PeakReview,
     review_peaks,
 )
+from python_analyzer.analysis.session_state import AnalysisSessionState
 
 
 SESSION_SCHEMA_VERSION = 1
@@ -126,6 +127,32 @@ def build_analysis_session_payload(
             ],
         },
     }
+
+
+def build_analysis_session_payload_from_state(
+    state: AnalysisSessionState,
+    *,
+    app_version: str,
+    rust_core_version: str,
+    processing_passport_rows: Sequence[tuple[Any, Any]] = (),
+) -> dict[str, Any]:
+    """Build a session payload from the explicit GUI-independent state."""
+
+    return build_analysis_session_payload(
+        source_file_name=state.source_file_name,
+        data_points_count=state.data_points_count,
+        settings=state.settings,
+        method_name=state.method_name,
+        result=state.result,
+        frequency_axis=state.frequency_axis,
+        spectrum=state.spectrum,
+        peaks=state.peaks,
+        peak_reviews=state.peak_reviews,
+        matches=state.matches,
+        app_version=app_version,
+        rust_core_version=rust_core_version,
+        processing_passport_rows=processing_passport_rows,
+    )
 
 
 def write_analysis_session(path: str | Path, payload: Mapping[str, Any]) -> None:

@@ -8,9 +8,9 @@ from __future__ import annotations
 
 from typing import Any
 
-import filters  # type: ignore
 import spectrometer_rust  # type: ignore
 
+from python_analyzer.analysis import filters
 from python_analyzer.analysis.models import AnalysisSettings
 
 

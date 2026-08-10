@@ -11,6 +11,7 @@ from openpyxl.styles import Font, PatternFill
 from openpyxl.worksheet.worksheet import Worksheet
 
 from .pdf_report import PDFReportData
+from .spreadsheet_safety import safe_spreadsheet_cell
 
 
 PathLike = Union[str, Path]
@@ -120,5 +121,5 @@ class ExcelReportExporter:
         if isinstance(value, (str, int, float, bool)):
             if isinstance(value, float) and not math.isfinite(value):
                 return None
-            return value
-        return str(value)
+            return safe_spreadsheet_cell(value)
+        return safe_spreadsheet_cell(str(value))

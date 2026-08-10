@@ -13,21 +13,11 @@ from PyQt5.QtWidgets import (
 from PyQt5.QtCore import Qt
 from PyQt5.QtGui import QFont, QFontDatabase, QTextCursor
 
+from python_analyzer.analysis import filters
 from python_analyzer.core.identification import DATA_TYPE_CHOICES, normalize_data_type
 from python_analyzer.analysis.windowing import FFT_WINDOW_CHOICES, normalize_fft_window_type
 from python_analyzer.gui.log_view import append_log_entry, log_level_from_entry
 from python_analyzer.gui.theme import FONT_CANDIDATES
-
-# These will be provided by the parent or imported
-# We use parent to access state
-
-# Import constants and helpers from main for compatibility
-# (in full refactor some would be moved to shared)
-
-try:
-    import filters
-except Exception:
-    filters = None
 
 # Constants copied for dialogs (to avoid circular)
 DEFAULT_BASELINE_ENABLED = True
@@ -42,9 +32,9 @@ DEFAULT_WINDOW_TYPE = "hann"
 
 
 class SettingsDialog(QDialog):
-    def __init__(self, parent):
+    def __init__(self, parent, controller=None):
         super().__init__(parent)
-        self.main_window = parent
+        self.main_window = controller or parent
         self.setWindowTitle("Settings")
         self.setMinimumWidth(360)
 
@@ -61,20 +51,20 @@ class SettingsDialog(QDialog):
         self.theme_combo = QComboBox()
         self.theme_combo.addItem("Dark", "dark")
         self.theme_combo.addItem("Light", "light")
-        self.theme_combo.setCurrentIndex(self.theme_combo.findData(parent.theme))
+        self.theme_combo.setCurrentIndex(self.theme_combo.findData(self.main_window.theme))
         self.theme_combo.currentIndexChanged.connect(self._theme_changed)
         form.addRow("Theme", self.theme_combo)
 
         self.font_combo = QComboBox()
         for family in self._font_choices():
             self.font_combo.addItem(family)
-        self.font_combo.setCurrentText(parent.font_family)
+        self.font_combo.setCurrentText(self.main_window.font_family)
         self.font_combo.currentTextChanged.connect(self._font_changed)
         form.addRow("Font", self.font_combo)
 
         self.font_size_spin = QSpinBox()
         self.font_size_spin.setRange(9, 16)
-        self.font_size_spin.setValue(parent.font_size)
+        self.font_size_spin.setValue(self.main_window.font_size)
         self.font_size_spin.setSuffix(" pt")
         self.font_size_spin.valueChanged.connect(self._font_size_changed)
         form.addRow("Font size", self.font_size_spin)
@@ -129,9 +119,9 @@ class SettingsDialog(QDialog):
         self.font_size_spin.blockSignals(False)
 
 class LogWindow(QDialog):
-    def __init__(self, parent):
+    def __init__(self, parent, controller=None):
         super().__init__(parent)
-        self.main_window = parent
+        self.main_window = controller or parent
         self.setWindowTitle("ChromaTsvet Analysis Console")
         self.resize(760, 460)
 
@@ -144,14 +134,14 @@ class LogWindow(QDialog):
         self.log_view.setFont(QFont("Consolas", 9))
         layout.addWidget(self.log_view)
 
-        for entry in parent.log_history:
+        for entry in self.main_window.log_history:
             self.append_entry(entry, log_level_from_entry(entry))
 
         buttons = QHBoxLayout()
         clear_button = QPushButton("Clear")
         copy_button = QPushButton("Copy diagnostics")
         close_button = QPushButton("Close")
-        clear_button.clicked.connect(parent.clear_log)
+        clear_button.clicked.connect(self.main_window.clear_log)
         copy_button.clicked.connect(self.copy_all)
         close_button.clicked.connect(self.close)
         buttons.addWidget(clear_button)
@@ -173,9 +163,9 @@ class LogWindow(QDialog):
 
 
 class AnalysisSettingsDialog(QDialog):
-    def __init__(self, parent):
+    def __init__(self, parent, controller=None):
         super().__init__(parent)
-        self.main_window = parent
+        self.main_window = controller or parent
         self.setWindowTitle("Analysis Settings")
         self.setMinimumWidth(440)
 
@@ -209,7 +199,7 @@ class AnalysisSettingsDialog(QDialog):
         baseline_layout.setSpacing(10)
 
         self.baseline_checkbox = QCheckBox("Enable baseline correction")
-        self.baseline_checkbox.setChecked(parent.baseline_enabled)
+        self.baseline_checkbox.setChecked(self.main_window.baseline_enabled)
         baseline_layout.addWidget(self.baseline_checkbox)
 
         baseline_form = QFormLayout()
@@ -217,7 +207,7 @@ class AnalysisSettingsDialog(QDialog):
         self.baseline_method_combo = QComboBox()
         self.baseline_method_combo.addItem("Improved", "improved")
         self.baseline_method_combo.addItem("Simple", "simple")
-        method_index = self.baseline_method_combo.findData(parent.baseline_method)
+        method_index = self.baseline_method_combo.findData(self.main_window.baseline_method)
         self.baseline_method_combo.setCurrentIndex(max(0, method_index))
         baseline_form.addRow("Method", self.baseline_method_combo)
         baseline_layout.addLayout(baseline_form)
@@ -233,7 +223,7 @@ class AnalysisSettingsDialog(QDialog):
         self.sample_rate_spin.setDecimals(3)
         self.sample_rate_spin.setSingleStep(100.0)
         self.sample_rate_spin.setSuffix(" Hz")
-        self.sample_rate_spin.setValue(parent.sample_rate)
+        self.sample_rate_spin.setValue(self.main_window.sample_rate)
         self.sample_rate_spin.setToolTip("Sampling rate used to convert FFT bins to frequency")
         acquisition_form.addRow("Sample rate", self.sample_rate_spin)
 
@@ -253,7 +243,7 @@ class AnalysisSettingsDialog(QDialog):
         normalization_layout.setSpacing(8)
 
         self.normalize_area_checkbox = QCheckBox("Normalize spectrum area to 1")
-        self.normalize_area_checkbox.setChecked(parent.normalize_area)
+        self.normalize_area_checkbox.setChecked(self.main_window.normalize_area)
         self.normalize_area_checkbox.setToolTip(
             "Scale the baseline-corrected spectrum by its positive trapezoidal area before peak detection"
         )
@@ -265,7 +255,9 @@ class AnalysisSettingsDialog(QDialog):
         smoothing_layout.setSpacing(8)
 
         self.spectrum_smoothing_checkbox = QCheckBox("Smooth spectrum before peak detection")
-        self.spectrum_smoothing_checkbox.setChecked(parent.spectrum_smoothing_enabled)
+        self.spectrum_smoothing_checkbox.setChecked(
+            self.main_window.spectrum_smoothing_enabled
+        )
         smoothing_layout.addWidget(self.spectrum_smoothing_checkbox)
 
         smoothing_form = QFormLayout()
@@ -276,7 +268,7 @@ class AnalysisSettingsDialog(QDialog):
         self.spectrum_smoothing_method_combo.addItem("Savitzky-Golay", "savgol")
         self.spectrum_smoothing_method_combo.addItem("Median", "median")
         smoothing_index = self.spectrum_smoothing_method_combo.findData(
-            parent.spectrum_smoothing_method
+            self.main_window.spectrum_smoothing_method
         )
         self.spectrum_smoothing_method_combo.setCurrentIndex(max(0, smoothing_index))
         smoothing_form.addRow("Method", self.spectrum_smoothing_method_combo)
@@ -285,7 +277,9 @@ class AnalysisSettingsDialog(QDialog):
         self.spectrum_smoothing_window_spin.setRange(3, 501)
         self.spectrum_smoothing_window_spin.setSingleStep(2)
         self.spectrum_smoothing_window_spin.setSuffix(" points")
-        self.spectrum_smoothing_window_spin.setValue(parent.spectrum_smoothing_window)
+        self.spectrum_smoothing_window_spin.setValue(
+            self.main_window.spectrum_smoothing_window
+        )
         self.spectrum_smoothing_window_spin.valueChanged.connect(
             self._ensure_odd_smoothing_window_size
         )
@@ -303,7 +297,7 @@ class AnalysisSettingsDialog(QDialog):
         if filters:
             for filter_type, display_name in filters.get_available_filters().items():
                 self.filter_type_combo.addItem(display_name, filter_type)
-        filter_index = self.filter_type_combo.findData(parent.filter_type)
+        filter_index = self.filter_type_combo.findData(self.main_window.filter_type)
         self.filter_type_combo.setCurrentIndex(max(0, filter_index))
         filter_form.addRow("Filter", self.filter_type_combo)
 
@@ -312,7 +306,7 @@ class AnalysisSettingsDialog(QDialog):
         self.filter_window_spin.setRange(3, 51)
         self.filter_window_spin.setSingleStep(2)
         self.filter_window_spin.setValue(
-            parent.filter_params.get(
+            self.main_window.filter_params.get(
                 "window_size", 5 if not filters else filters.get_default_params("median")["window_size"]
             )
         )
@@ -330,7 +324,7 @@ class AnalysisSettingsDialog(QDialog):
         self.threshold_spin.setRange(0.001, 1.0)
         self.threshold_spin.setDecimals(3)
         self.threshold_spin.setSingleStep(0.001)
-        self.threshold_spin.setValue(parent.peak_threshold)
+        self.threshold_spin.setValue(self.main_window.peak_threshold)
         self.threshold_spin.setToolTip("Sensitivity factor relative to the spectrum dynamic range")
         peak_form.addRow("Threshold", self.threshold_spin)
 
@@ -339,7 +333,7 @@ class AnalysisSettingsDialog(QDialog):
         self.prominence_spin.setDecimals(4)
         self.prominence_spin.setSingleStep(0.001)
         self.prominence_spin.setSpecialValueText("Automatic")
-        self.prominence_spin.setValue(parent.peak_prominence)
+        self.prominence_spin.setValue(self.main_window.peak_prominence)
         self.prominence_spin.setToolTip("Minimum peak prominence in spectrum intensity units; 0 uses automatic detection")
         peak_form.addRow("Prominence", self.prominence_spin)
 
@@ -348,14 +342,14 @@ class AnalysisSettingsDialog(QDialog):
         self.min_snr_spin.setDecimals(3)
         self.min_snr_spin.setSingleStep(0.1)
         self.min_snr_spin.setSpecialValueText("Disabled")
-        self.min_snr_spin.setValue(parent.peak_min_snr)
+        self.min_snr_spin.setValue(self.main_window.peak_min_snr)
         self.min_snr_spin.setToolTip("Minimum signal-to-noise ratio required for non-fallback peaks")
         peak_form.addRow("Minimum SNR", self.min_snr_spin)
 
         self.distance_spin = QSpinBox()
         self.distance_spin.setRange(1, 10_000)
         self.distance_spin.setSuffix(" points")
-        self.distance_spin.setValue(parent.peak_distance)
+        self.distance_spin.setValue(self.main_window.peak_distance)
         self.distance_spin.setToolTip("Minimum distance between detected peaks")
         peak_form.addRow("Distance", self.distance_spin)
         layout.addWidget(peak_group)
