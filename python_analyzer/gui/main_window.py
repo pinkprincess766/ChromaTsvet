@@ -12,7 +12,6 @@ import tempfile
 from datetime import datetime
 from pathlib import Path
 
-import filters
 import numpy as np
 import spectrometer_rust
 from PyQt5.QtWidgets import (
@@ -39,6 +38,7 @@ from python_analyzer.core.identification import (
 )
 from python_analyzer.readers import read_spectrum_file, SpectrumFileFormatError
 from python_analyzer.analysis.models import AnalysisSettings, LoadedSpectrum
+from python_analyzer.analysis import filters
 from python_analyzer.analysis.manual_peaks import (
     editable_peak_from_values,
 )
@@ -60,17 +60,17 @@ from python_analyzer.analysis.peak_review import (
     review_summary,
     set_peak_review_status,
 )
-from python_analyzer.analysis.processing_passport import build_processing_passport
 from python_analyzer.analysis.runner import run_analysis as run_analysis_pipeline
 from python_analyzer.analysis.session_bundle import (
     SESSION_FILE_FILTER,
     SESSION_SUFFIX,
     SessionFormatError,
-    build_analysis_session_payload,
+    build_analysis_session_payload_from_state,
     read_analysis_session,
     session_output_path,
     write_analysis_session,
 )
+from python_analyzer.analysis.session_state import AnalysisSessionState
 from python_analyzer.analysis.windowing import (
     DEFAULT_FFT_WINDOW,
     normalize_fft_window_type,
@@ -78,11 +78,10 @@ from python_analyzer.analysis.windowing import (
 from python_analyzer.exporters import (
     ExcelReportExporter,
     HTMLReportExporter,
-    PDFMatchRow,
-    PDFReportData,
     PDFReportExporter,
     write_peaks_csv,
 )
+from python_analyzer.exporters.report_data import build_report_data
 from python_analyzer.viz.spectrum_plot import SpectrumPlot
 from python_analyzer.gui.dialogs import SettingsDialog, LogWindow, AnalysisSettingsDialog
 from python_analyzer.gui.diagnostics import (
@@ -1085,8 +1084,8 @@ class MainWindow(QMainWindow):
 
     def display_source_name(self):
         if self.current_file_name:
-            return self.current_file_name
-        if self.current_data:
+            return display_file_label(self.current_file_name)
+        if self.current_data is not None:
             return "In-memory data"
         return "No file loaded"
 
@@ -2015,112 +2014,41 @@ class MainWindow(QMainWindow):
         self.log("Reference library restored", status_message="Reference library restored")
         self.run_analysis()
 
-    def _collect_report_matches(self):
-        matches = []
-        for row in range(self.table.rowCount()):
-            matches.append(
-                PDFMatchRow(
-                    substance_name=self._table_text(row, 0),
-                    formula=self._table_text(row, 1),
-                    score=self._table_text(row, 2),
-                    compared_points=self._table_text(row, 3),
-                )
-            )
-        return matches
-
-    def _table_text(self, row, column):
-        item = self.table.item(row, column)
-        return item.text() if item is not None else ""
-
-    def _build_report_data(self):
-        source_file_name = self.display_source_name()
+    def _analysis_session_state(self):
         data_points_count = (
             len(self.current_data)
-            if self.current_data
+            if self.current_data is not None
             else self.current_data_points_count
         )
-        peaks = self.current_result.get("peaks", []) if self.current_result else []
-        generated_at = datetime.now()
-        rust_core_version = spectrometer_rust.get_version()
-        summary_rows = [
-            ("Date", f"{generated_at:%Y-%m-%d %H:%M}"),
-            ("App version", APP_VERSION),
-            ("Rust core", rust_core_version),
-            ("Source file", source_file_name),
-            ("Data points", str(data_points_count)),
-            ("Peaks found", str(len(peaks))),
-        ]
-        accepted_peaks = None
-        rejected_peaks = None
-        if self.current_peak_reviews:
-            counts = review_summary(self.current_peak_reviews)
-            accepted_peaks = counts[PEAK_REVIEW_ACCEPTED]
-            rejected_peaks = counts[PEAK_REVIEW_REJECTED]
-            summary_rows.extend(
-                [
-                    ("Accepted peaks", str(accepted_peaks)),
-                    ("Rejected peaks", str(rejected_peaks)),
-                ]
-            )
-
-        baseline_description = (
-            self.baseline_method if self.baseline_enabled else "disabled"
+        result = self.current_result or {}
+        frequency_axis = (
+            self.current_frequency_axis
+            if self.current_frequency_axis is not None
+            else []
         )
-        normalization_description = (
-            "area" if self.current_result.get("normalized") else "disabled"
+        spectrum = (
+            self.current_spectrum_values
+            if self.current_spectrum_values is not None
+            else []
         )
-        smoothing_description = (
-            f"{self.spectrum_smoothing_method}/{self.spectrum_smoothing_window}"
-            if self.spectrum_smoothing_enabled
-            else "disabled"
-        )
-        parameter_rows = [
-            ("Analysis method", self.current_method_preset_name or "custom"),
-            ("Sample rate", f"{self.sample_rate:g} Hz"),
-            ("FFT window", self.window_type),
-            ("Signal filter", self.filter_type),
-            ("Filter params", self.filter_params),
-            ("Baseline", baseline_description),
-            ("Spectrum smoothing", smoothing_description),
-            ("Normalization", normalization_description),
-            ("Data type", self.data_type),
-            ("Peak tolerance", f"{self.peak_frequency_tolerance:g} Hz"),
-            ("Threshold", f"{self.peak_threshold:.3f}"),
-            (
-                "Prominence",
-                "automatic" if self.peak_prominence == 0 else f"{self.peak_prominence:g}",
-            ),
-            (
-                "Minimum SNR",
-                "disabled" if self.peak_min_snr == 0 else f"{self.peak_min_snr:g}",
-            ),
-            ("Distance", f"{self.peak_distance} points"),
-        ]
-        processing_passport = build_processing_passport(
+        return AnalysisSessionState(
+            source_file_name=self.display_source_name(),
+            data_points_count=data_points_count,
             settings=self.analysis_settings,
-            result=self.current_result,
-            source_file_name=source_file_name,
-            data_points_count=data_points_count,
-            peaks_count=len(peaks),
-            app_version=APP_VERSION,
-            rust_core_version=rust_core_version,
-            generated_at=generated_at,
             method_name=self.current_method_preset_name or "custom",
-            accepted_peaks=accepted_peaks,
-            rejected_peaks=rejected_peaks,
+            result=result,
+            frequency_axis=frequency_axis,
+            spectrum=spectrum,
+            peaks=self.current_peaks,
+            peak_reviews=self.current_peak_reviews,
+            matches=self.current_matches,
         )
 
-        return PDFReportData(
-            title="ChromaTsvet Analysis Report",
-            subtitle="Spectral data and chromatogram analysis",
-            summary_rows=summary_rows,
-            parameter_rows=parameter_rows,
-            processing_passport_rows=list(processing_passport.rows),
-            peaks=peaks,
-            matches=self._collect_report_matches(),
-            source_file_name=source_file_name,
-            data_points_count=data_points_count,
-            peaks_count=len(peaks),
+    def _build_report_data(self):
+        return build_report_data(
+            self._analysis_session_state(),
+            app_version=APP_VERSION,
+            rust_core_version=spectrometer_rust.get_version(),
         )
 
     def _render_plot_snapshot(self):
@@ -2173,26 +2101,10 @@ class MainWindow(QMainWindow):
 
         output_file = session_output_path(file)
         try:
+            state = self._analysis_session_state()
             report_data = self._build_report_data()
-            payload = build_analysis_session_payload(
-                source_file_name=self.display_source_name(),
-                data_points_count=report_data.data_points_count,
-                settings=self.analysis_settings,
-                method_name=self.current_method_preset_name or "custom",
-                result=self.current_result,
-                frequency_axis=(
-                    self.current_frequency_axis
-                    if self.current_frequency_axis is not None
-                    else []
-                ),
-                spectrum=(
-                    self.current_spectrum_values
-                    if self.current_spectrum_values is not None
-                    else []
-                ),
-                peaks=self.current_peaks,
-                peak_reviews=self.current_peak_reviews,
-                matches=self.current_matches,
+            payload = build_analysis_session_payload_from_state(
+                state,
                 app_version=APP_VERSION,
                 rust_core_version=spectrometer_rust.get_version(),
                 processing_passport_rows=report_data.processing_passport_rows,
