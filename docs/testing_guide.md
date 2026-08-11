@@ -40,6 +40,43 @@ python scripts/dev.py doctor
 python scripts/dev.py run
 ```
 
+## 15-Minute Tester Onboarding
+
+Use this path for a first smoke test before trying private or instrument-specific
+files.
+
+1. Start ChromaTsvet from the project root:
+
+   ```bash
+   make run
+   ```
+
+   If `make` is unavailable, use `python scripts/dev.py run`.
+
+2. Open `examples/alpha/clean_three_peaks.csv`.
+3. Keep the default analysis settings for the first run, or set sample rate to
+   `1000` if the field is empty.
+4. Confirm that the application shows:
+   - the loaded filename in the window/status area;
+   - a populated spectrum graph;
+   - peak markers on the graph;
+   - rows in the detected peak table.
+5. Export one report:
+   - PDF or HTML is best for visual review;
+   - Excel is useful for checking tabular values;
+   - peak CSV is useful for checking downstream data handling.
+6. Compare the exported report with the application:
+   - filename should match;
+   - sample rate and analysis settings should match;
+   - peak count should match;
+   - the most visible peaks should have plausible frequency/intensity values.
+7. Repeat with `examples/alpha/noisy_overlap.csv` and inspect warnings, SNR,
+   prominence, and manual peak review behavior.
+
+Stop after the first unexpected result and report it. A small reproducible bug
+report is more useful than a long session where the original failure is hard to
+reconstruct.
+
 ## Safe Sample Data
 
 The `examples/alpha/` directory contains synthetic data only. These files are
@@ -94,4 +131,3 @@ sample names, or confidential laboratory identifiers into public GitHub issues.
 - Import logic supports common CSV/TXT variants, but real instrument exports can
   still contain unusual headers, encodings, or metadata blocks.
 - Reports are designed for review and development, not formal regulated output.
-
