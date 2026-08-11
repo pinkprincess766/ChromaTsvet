@@ -21,6 +21,14 @@
 
 ![ChromaTsvet spectrum analysis](docs/screenshots/01-main-spectrum.png)
 
+## Quick Demo
+
+![ChromaTsvet workflow demo](docs/demo/chromatsvet-workflow.gif)
+
+The demo uses only the synthetic sample data from `examples/alpha/`. It shows
+the basic tester path: open a sample file, run analysis, inspect detected peaks
+on the graph and table, then export a report.
+
 ChromaTsvet combines a PyQt desktop interface with a Rust/PyO3 signal-processing
 core. It is designed as a practical, inspectable foundation for scientific
 signal analysis rather than a black-box workflow. The name honors Mikhail
@@ -163,6 +171,17 @@ spectrum.
 Synthetic smoke-test inputs are available in `examples/alpha/` for testers who
 want to verify import, analysis, plotting, and export without using private data.
 
+### First tester smoke test
+
+For a first pass, use the safe synthetic sample data:
+
+1. Start the app with `make run` or `python scripts/dev.py run`.
+2. Open `examples/alpha/clean_three_peaks.csv`.
+3. Confirm that analysis runs and detected peaks appear on the graph and in the peak table.
+4. Export one report, preferably PDF or HTML, and confirm it contains the same filename, settings, and peak count shown in the app.
+
+For the full closed-alpha checklist, see the [Alpha Testing Guide](docs/testing_guide.md).
+
 ## Input Data
 
 The simplest supported file contains one intensity value per line:
@@ -226,6 +245,12 @@ Regenerate the v0.2 PNG screenshot set:
 
 ```bash
 QT_QPA_PLATFORM=offscreen python tools/capture_release_screenshots.py
+```
+
+Regenerate the README workflow GIF:
+
+```bash
+QT_QPA_PLATFORM=offscreen python tools/capture_readme_demo_gif.py
 ```
 
 See [Development Notes](docs/development.md) for the current maturin workflow
