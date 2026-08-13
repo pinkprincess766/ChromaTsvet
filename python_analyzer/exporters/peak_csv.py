@@ -7,6 +7,8 @@ import math
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
+from .spreadsheet_safety import safe_spreadsheet_cell
+
 
 PEAK_CSV_HEADERS = [
     "source_file",
@@ -46,20 +48,19 @@ def write_peaks_csv(
         writer.writerow(PEAK_CSV_HEADERS)
         for index, peak in enumerate(peaks):
             review = _review_at(peak_reviews, index)
-            writer.writerow(
-                [
-                    *(metadata.get(column, "") for column in _METADATA_COLUMNS),
-                    _peak_frequency(peak),
-                    _peak_value(peak, "position"),
-                    _peak_value(peak, "intensity"),
-                    _peak_value(peak, "width"),
-                    _peak_value(peak, "width_hz"),
-                    _peak_value(peak, "area"),
-                    _peak_value(peak, "snr"),
-                    getattr(review, "status", ""),
-                    getattr(review, "reason", ""),
-                ]
-            )
+            row = [
+                *(metadata.get(column, "") for column in _METADATA_COLUMNS),
+                _peak_frequency(peak),
+                _peak_value(peak, "position"),
+                _peak_value(peak, "intensity"),
+                _peak_value(peak, "width"),
+                _peak_value(peak, "width_hz"),
+                _peak_value(peak, "area"),
+                _peak_value(peak, "snr"),
+                getattr(review, "status", ""),
+                getattr(review, "reason", ""),
+            ]
+            writer.writerow([safe_spreadsheet_cell(value) for value in row])
 
 
 def _peak_value(peak: Any, name: str) -> Any:

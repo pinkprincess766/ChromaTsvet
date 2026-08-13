@@ -1,3 +1,4 @@
+import csv
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from types import SimpleNamespace
@@ -11,6 +12,7 @@ from python_analyzer.exporters import (
     HTMLReportExporter,
     PDFMatchRow,
     PDFReportData,
+    write_peaks_csv,
 )
 
 
@@ -120,6 +122,62 @@ class ReportExportersTest(unittest.TestCase):
         self.assertEqual(workbook["Peaks"]["G2"].value, 18.0)
         self.assertEqual(workbook["Matches"]["A2"].value, "Reference")
         self.assertEqual(workbook["Matches"]["C2"].value, "0.900")
+
+    def test_excel_report_neutralizes_formula_like_text(self):
+        report_data = sample_report_data()
+        report_data.summary_rows.append(("Operator note", '=HYPERLINK("http://x")'))
+        report_data.matches = [
+            PDFMatchRow(
+                substance_name="=cmd",
+                formula="+H2O",
+                score="@score",
+                compared_points="-1",
+            )
+        ]
+
+        with TemporaryDirectory() as temp_dir:
+            output_path = Path(temp_dir) / "report.xlsx"
+
+            ExcelReportExporter().export(output_path, report_data)
+
+            workbook = load_workbook(output_path, data_only=False)
+
+        self.assertEqual(workbook["Summary"]["B5"].value, '\'=HYPERLINK("http://x")')
+        self.assertEqual(workbook["Matches"]["A2"].value, "'=cmd")
+        self.assertEqual(workbook["Matches"]["B2"].value, "'+H2O")
+        self.assertEqual(workbook["Matches"]["C2"].value, "'@score")
+        self.assertEqual(workbook["Matches"]["D2"].value, "'-1")
+
+    def test_peak_csv_neutralizes_formula_like_text(self):
+        peak = SimpleNamespace(
+            frequency=120.5,
+            position=42.0,
+            intensity="=bad",
+            width=3.2,
+            width_hz=1.6,
+            area=2.4,
+            snr=18.0,
+        )
+        review = SimpleNamespace(status="accepted", reason="-manual note")
+
+        with TemporaryDirectory() as temp_dir:
+            output_path = Path(temp_dir) / "peaks.csv"
+            write_peaks_csv(
+                output_path,
+                [peak],
+                {
+                    "source_file": '=HYPERLINK("http://x")',
+                    "data_type": "@raman",
+                },
+                [review],
+            )
+            with output_path.open(newline="", encoding="utf-8") as csv_file:
+                rows = list(csv.reader(csv_file))
+
+        self.assertEqual(rows[1][0], '\'=HYPERLINK("http://x")')
+        self.assertEqual(rows[1][9], "'@raman")
+        self.assertEqual(rows[1][13], "'=bad")
+        self.assertEqual(rows[1][19], "'-manual note")
 
 
 if __name__ == "__main__":

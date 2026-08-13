@@ -8,6 +8,14 @@ Python/PyQt による UI と Rust/PyO3 による信号処理コアを組み合�
 
 クローズド alpha テスト向けの手順は [Alpha Testing Guide](docs/testing_guide.md) を参照してください。`examples/alpha/` には、プライベートデータを使わずにインポート、解析、プロット、エクスポートを確認するための合成サンプルがあります。
 
+## クイックデモ
+
+![ChromaTsvet workflow demo](docs/demo/chromatsvet-workflow.gif)
+
+このデモは `examples/alpha/` の合成サンプルだけを使います。基本的な
+テスター手順は、サンプルファイルを開く、解析を実行する、グラフと
+テーブルでピークを確認する、レポートをエクスポートする、という流れです。
+
 ## 主な機能
 
 - CSV/TXT から数値信号を読み込み
