@@ -17,6 +17,11 @@ from python_analyzer.core.peak_matching import (
     peak_to_reference_peak,
     select_one_to_one_peak_matches,
 )
+from python_analyzer.core.reference_library_io import (
+    ReferenceImportPreview,
+    ReferenceImportResult,
+    ReferenceLibraryRecord,
+)
 from python_analyzer.core.reference_repository import (
     ReferenceLibraryEntry,
     ReferenceRepository,
@@ -94,6 +99,25 @@ class SpectrumIdentifier:
 
     def list_references(self) -> list[ReferenceLibraryEntry]:
         return self.repository.list_references()
+
+    def export_reference_records(
+        self,
+        reference_ids: list[int] | None = None,
+    ) -> list[ReferenceLibraryRecord]:
+        return self.repository.export_reference_records(reference_ids)
+
+    def preview_reference_import(
+        self,
+        records: list[ReferenceLibraryRecord],
+    ) -> ReferenceImportPreview:
+        return self.repository.preview_reference_import(records)
+
+    def import_reference_records(
+        self,
+        records: list[ReferenceLibraryRecord],
+        duplicate_policy: str = "skip",
+    ) -> ReferenceImportResult:
+        return self.repository.import_reference_records(records, duplicate_policy)
 
     def delete_reference(self, reference_id: int) -> bool:
         return self.repository.delete_reference(reference_id)
