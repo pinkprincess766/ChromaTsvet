@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 from PyQt5.QtCore import Qt
 from PyQt5.QtWidgets import (
     QAbstractItemView,
     QComboBox,
     QDialog,
     QDialogButtonBox,
+    QFileDialog,
     QFormLayout,
     QHBoxLayout,
     QLabel,
@@ -23,6 +26,15 @@ from python_analyzer.core.identification import (
     DATA_TYPE_CHOICES,
     ReferenceLibraryEntry,
     normalize_data_type,
+)
+from python_analyzer.core.reference_library_io import (
+    DUPLICATE_POLICIES,
+    ReferenceImportPreview,
+    ReferenceLibraryFormatError,
+    read_reference_csv,
+    read_reference_json,
+    write_reference_csv,
+    write_reference_json,
 )
 
 
@@ -72,6 +84,67 @@ class ReferenceMetadataDialog(QDialog):
             QMessageBox.warning(self, "Invalid name", "Reference name cannot be empty.")
             return
         super().accept()
+
+
+class ReferenceImportPreviewDialog(QDialog):
+    """Preview portable references before importing them."""
+
+    def __init__(self, parent, preview: ReferenceImportPreview) -> None:
+        super().__init__(parent)
+        self.preview = preview
+        self.setWindowTitle("Import References")
+        self.resize(720, 420)
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(14, 14, 14, 12)
+        layout.setSpacing(10)
+
+        layout.addWidget(
+            QLabel(
+                f"{preview.total_count} references · "
+                f"{preview.new_count} new · {preview.duplicate_count} duplicates"
+            )
+        )
+
+        self.table = QTableWidget()
+        self.table.setColumnCount(5)
+        self.table.setHorizontalHeaderLabels(
+            ["Name", "Data type", "Points", "Peaks", "Import status"]
+        )
+        self.table.setAlternatingRowColors(True)
+        self.table.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        self.table.verticalHeader().setVisible(False)
+        self.table.horizontalHeader().setStretchLastSection(True)
+        self.table.setRowCount(len(preview.rows))
+        for row, preview_row in enumerate(preview.rows):
+            values = [
+                preview_row.name,
+                preview_row.data_type,
+                str(preview_row.spectrum_points),
+                str(preview_row.peak_count),
+                preview_row.status,
+            ]
+            for column, value in enumerate(values):
+                self.table.setItem(row, column, QTableWidgetItem(value))
+        layout.addWidget(self.table)
+
+        form = QFormLayout()
+        self.policy_combo = QComboBox()
+        self.policy_combo.addItem("Skip duplicate names", "skip")
+        self.policy_combo.addItem("Merge into existing names", "merge")
+        self.policy_combo.addItem("Replace duplicate names", "replace")
+        form.addRow("Duplicate handling", self.policy_combo)
+        layout.addLayout(form)
+
+        buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        layout.addWidget(buttons)
+
+    @property
+    def duplicate_policy(self) -> str:
+        policy = self.policy_combo.currentData()
+        return policy if policy in DUPLICATE_POLICIES else "skip"
 
 
 class ReferenceLibraryDialog(QDialog):
@@ -126,12 +199,21 @@ class ReferenceLibraryDialog(QDialog):
         self.refresh_button = QPushButton("Refresh")
         self.edit_button = QPushButton("Edit selected")
         self.delete_button = QPushButton("Delete selected")
+        self.export_selected_button = QPushButton("Export selected")
+        self.export_all_button = QPushButton("Export all")
+        self.import_button = QPushButton("Import...")
         self.refresh_button.clicked.connect(self.refresh)
         self.edit_button.clicked.connect(self.edit_selected)
         self.delete_button.clicked.connect(self.delete_selected)
+        self.export_selected_button.clicked.connect(self.export_selected)
+        self.export_all_button.clicked.connect(self.export_all)
+        self.import_button.clicked.connect(self.import_references)
         controls.addWidget(self.refresh_button)
         controls.addWidget(self.edit_button)
         controls.addWidget(self.delete_button)
+        controls.addWidget(self.export_selected_button)
+        controls.addWidget(self.export_all_button)
+        controls.addWidget(self.import_button)
         controls.addStretch()
 
         close_buttons = QDialogButtonBox(QDialogButtonBox.Close)
@@ -205,6 +287,74 @@ class ReferenceLibraryDialog(QDialog):
         self.changed = True
         self.refresh()
 
+    def export_selected(self) -> None:
+        entry = self._selected_entry()
+        if entry is None:
+            QMessageBox.information(
+                self,
+                "No reference selected",
+                "Select a reference entry to export.",
+            )
+            return
+        records = self.identifier.export_reference_records([entry.reference_id])
+        self._export_records(
+            records,
+            default_name=f"{self._safe_default_filename(entry.name)}_reference",
+        )
+
+    def export_all(self) -> None:
+        records = self.identifier.export_reference_records()
+        if not records:
+            QMessageBox.information(
+                self,
+                "No references",
+                "The reference library does not contain exportable records.",
+            )
+            return
+        self._export_records(records, default_name="chromatsvet_reference_library")
+
+    def import_references(self) -> None:
+        file_path, _selected_filter = QFileDialog.getOpenFileName(
+            self,
+            "Import reference library",
+            "",
+            "Reference Library (*.json *.csv);;JSON (*.json);;CSV (*.csv)",
+        )
+        if not file_path:
+            return
+
+        path = Path(file_path)
+        try:
+            records = self._read_reference_records(path)
+            if not records:
+                QMessageBox.information(
+                    self,
+                    "No references",
+                    "The selected file does not contain reference records.",
+                )
+                return
+            preview = self.identifier.preview_reference_import(records)
+        except (OSError, ReferenceLibraryFormatError, ValueError) as exc:
+            QMessageBox.warning(
+                self,
+                "Could not import references",
+                f"{self._safe_file_label(path)} could not be imported "
+                f"({type(exc).__name__}).",
+            )
+            return
+
+        dialog = ReferenceImportPreviewDialog(self, preview)
+        if dialog.exec() != QDialog.Accepted:
+            return
+
+        result = self.identifier.import_reference_records(
+            records,
+            duplicate_policy=dialog.duplicate_policy,
+        )
+        self.changed = self.changed or result.changed > 0
+        self.refresh()
+        self._show_import_result(result)
+
     def delete_selected(self) -> None:
         entry = self._selected_entry()
         if entry is None:
@@ -252,6 +402,8 @@ class ReferenceLibraryDialog(QDialog):
         has_selection = self._selected_entry() is not None
         self.edit_button.setEnabled(has_selection)
         self.delete_button.setEnabled(has_selection)
+        self.export_selected_button.setEnabled(has_selection)
+        self.export_all_button.setEnabled(bool(self.entries))
 
     def _entry_matches(
         self,
@@ -277,3 +429,78 @@ class ReferenceLibraryDialog(QDialog):
             f"{visible} of {total} reference entries shown · "
             f"{peak_backed} peak-based · {legacy} legacy"
         )
+
+    def _export_records(self, records: list, *, default_name: str) -> None:
+        if not records:
+            QMessageBox.information(
+                self,
+                "No references",
+                "There are no exportable references for the current selection.",
+            )
+            return
+
+        file_path, selected_filter = QFileDialog.getSaveFileName(
+            self,
+            "Export reference library",
+            f"{default_name}.json",
+            "JSON (*.json);;CSV (*.csv)",
+        )
+        if not file_path:
+            return
+
+        path = self._path_with_export_suffix(Path(file_path), selected_filter)
+        try:
+            if path.suffix.lower() == ".csv":
+                write_reference_csv(path, records)
+            else:
+                write_reference_json(path, records)
+        except (OSError, ValueError, ReferenceLibraryFormatError) as exc:
+            QMessageBox.warning(
+                self,
+                "Could not export references",
+                f"{self._safe_file_label(path)} could not be exported "
+                f"({type(exc).__name__}).",
+            )
+            return
+
+        QMessageBox.information(
+            self,
+            "References exported",
+            f"Exported {len(records)} references to {self._safe_file_label(path)}.",
+        )
+
+    def _read_reference_records(self, path: Path) -> list:
+        if path.suffix.lower() == ".csv":
+            return read_reference_csv(path)
+        return read_reference_json(path)
+
+    def _path_with_export_suffix(self, path: Path, selected_filter: str) -> Path:
+        if path.suffix.lower() in {".json", ".csv"}:
+            return path
+        suffix = ".csv" if "CSV" in selected_filter else ".json"
+        return path.with_suffix(suffix)
+
+    def _show_import_result(self, result) -> None:
+        message = (
+            f"Added: {result.added}\n"
+            f"Merged: {result.merged}\n"
+            f"Replaced: {result.replaced}\n"
+            f"Skipped: {result.skipped}\n"
+            f"Failed: {result.failed}"
+        )
+        if result.failed:
+            QMessageBox.warning(self, "References imported with warnings", message)
+            return
+        QMessageBox.information(self, "References imported", message)
+
+    def _safe_file_label(self, path: Path) -> str:
+        return path.name or "reference-library file"
+
+    def _safe_default_filename(self, value: object) -> str:
+        text = str(value or "reference").strip().lower()
+        safe = "".join(
+            char if char.isalnum() or char in {"-", "_"} else "_"
+            for char in text
+        )
+        safe = "_".join(part for part in safe.split("_") if part)
+        return safe[:80] or "reference"

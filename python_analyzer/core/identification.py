@@ -10,6 +10,16 @@ from dataclasses import dataclass
 from pathlib import Path
 from paths import DEFAULT_REFERENCE_DATA, get_library_db_path
 from python_analyzer.analysis.models import ReferencePeak, PeakMatch, PeakBasedMatchResult
+from python_analyzer.core.reference_library_io import (
+    ReferenceImportPreview,
+    ReferenceImportResult,
+    ReferenceLibraryRecord,
+    build_import_preview,
+    canonical_reference_name,
+    coerce_reference_record,
+    merge_reference_records,
+    normalize_duplicate_policy,
+)
 
 
 logger = logging.getLogger("chromatsvet.identification")
@@ -273,6 +283,227 @@ class SpectrumIdentifier:
                 )
             )
         return entries
+
+    def export_reference_records(
+        self,
+        reference_ids: list[int] | None = None,
+    ) -> list[ReferenceLibraryRecord]:
+        """Return portable reference records without local database metadata."""
+        rows = self._fetch_reference_rows(reference_ids)
+        records: list[ReferenceLibraryRecord] = []
+        for row in rows:
+            record = self._row_to_reference_record(row)
+            if record is not None:
+                records.append(record)
+        return records
+
+    def preview_reference_import(
+        self,
+        records: list[ReferenceLibraryRecord],
+    ) -> ReferenceImportPreview:
+        """Build a no-mutation import preview for UI and tests."""
+        existing_names = [entry.name for entry in self.list_references()]
+        return build_import_preview(records, existing_names)
+
+    def import_reference_records(
+        self,
+        records: list[ReferenceLibraryRecord],
+        duplicate_policy: str = "skip",
+    ) -> ReferenceImportResult:
+        """Import portable references with an explicit duplicate-name policy."""
+        policy = normalize_duplicate_policy(duplicate_policy)
+        added = merged = replaced = skipped = failed = 0
+
+        for raw_record in records:
+            try:
+                record = coerce_reference_record(raw_record)
+                key = canonical_reference_name(record.name)
+                existing = self._record_for_name_key(key)
+                if existing is None:
+                    if self._insert_reference_record(record):
+                        added += 1
+                    else:
+                        failed += 1
+                    continue
+
+                if policy == "skip":
+                    skipped += 1
+                    continue
+
+                if policy == "merge":
+                    record = merge_reference_records(existing, record)
+                    if self._replace_reference_by_name_key(key, record):
+                        merged += 1
+                    else:
+                        failed += 1
+                    continue
+
+                if self._replace_reference_by_name_key(key, record):
+                    replaced += 1
+                else:
+                    failed += 1
+            except Exception as exc:
+                failed += 1
+                logger.warning(
+                    "Skipped malformed imported reference (%s)",
+                    type(exc).__name__,
+                )
+
+        return ReferenceImportResult(
+            added=added,
+            merged=merged,
+            replaced=replaced,
+            skipped=skipped,
+            failed=failed,
+        )
+
+    def _fetch_reference_rows(
+        self,
+        reference_ids: list[int] | None = None,
+    ) -> list[tuple]:
+        query = (
+            "SELECT id, name, formula, spectrum, peaks_json, schema_version, data_type "
+            "FROM compounds"
+        )
+        params: list[int] = []
+        if reference_ids is not None:
+            for reference_id in reference_ids:
+                try:
+                    normalized_id = int(reference_id)
+                except (TypeError, ValueError):
+                    continue
+                if normalized_id > 0:
+                    params.append(normalized_id)
+            if not params:
+                return []
+            placeholders = ", ".join("?" for _ in params)
+            query = f"{query} WHERE id IN ({placeholders})"
+        query = f"{query} ORDER BY lower(name), id"
+        return list(self.conn.execute(query, params).fetchall())
+
+    def _row_to_reference_record(self, row: tuple) -> ReferenceLibraryRecord | None:
+        (
+            _reference_id,
+            name,
+            formula,
+            spectrum_json,
+            peaks_json,
+            schema_version,
+            data_type,
+        ) = row
+        try:
+            spectrum_values = _json_payload_list(spectrum_json)
+            peak_values = _json_payload_list(peaks_json)
+            return coerce_reference_record(
+                ReferenceLibraryRecord(
+                    name=str(name or ""),
+                    formula=str(formula or ""),
+                    data_type=normalize_data_type(data_type),
+                    schema_version=_safe_int(schema_version, default=1),
+                    spectrum=tuple(spectrum_values),
+                    peaks=tuple(normalize_reference_peaks(peak_values)),
+                )
+            )
+        except Exception as exc:
+            logger.warning(
+                "Skipped malformed stored reference during export (%s)",
+                type(exc).__name__,
+            )
+            return None
+
+    def _record_for_name_key(self, name_key: str) -> ReferenceLibraryRecord | None:
+        for record in self.export_reference_records():
+            if canonical_reference_name(record.name) == name_key:
+                return record
+        return None
+
+    def _reference_ids_for_name_key(self, name_key: str) -> list[int]:
+        return [
+            entry.reference_id
+            for entry in self.list_references()
+            if canonical_reference_name(entry.name) == name_key
+        ]
+
+    def _insert_reference_record(self, record: ReferenceLibraryRecord) -> bool:
+        try:
+            with self.conn:
+                self._insert_reference_record_without_commit(record)
+            return True
+        except Exception as exc:
+            logger.warning(
+                "Could not insert imported reference %r (%s)",
+                record.name,
+                type(exc).__name__,
+            )
+            return False
+
+    def _replace_reference_by_name_key(
+        self,
+        name_key: str,
+        record: ReferenceLibraryRecord,
+    ) -> bool:
+        reference_ids = self._reference_ids_for_name_key(name_key)
+        placeholders = ", ".join("?" for _ in reference_ids)
+        try:
+            with self.conn:
+                if reference_ids:
+                    self.conn.execute(
+                        f"DELETE FROM compounds WHERE id IN ({placeholders})",
+                        reference_ids,
+                    )
+                self._insert_reference_record_without_commit(record)
+            return True
+        except Exception as exc:
+            logger.warning(
+                "Could not replace imported reference %r (%s)",
+                record.name,
+                type(exc).__name__,
+            )
+            return False
+
+    def _insert_reference_record_without_commit(
+        self,
+        record: ReferenceLibraryRecord,
+    ) -> None:
+        clean_record = coerce_reference_record(record)
+        spectrum_json = None
+        if clean_record.spectrum:
+            spectrum_json = json.dumps(list(clean_record.spectrum), allow_nan=False)
+
+        peaks_json = None
+        if clean_record.peaks:
+            peaks_json = json.dumps(
+                [
+                    {
+                        "frequency": peak.frequency,
+                        "intensity": peak.intensity,
+                        "width": peak.width,
+                        "width_hz": peak.width_hz,
+                        "area": peak.area,
+                        "snr": peak.snr,
+                    }
+                    for peak in clean_record.peaks
+                ],
+                allow_nan=False,
+            )
+            if spectrum_json is None:
+                spectrum_json = "[]"
+
+        self.conn.execute(
+            """
+            INSERT INTO compounds
+            (name, formula, spectrum, peaks_json, schema_version, data_type)
+            VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (
+                clean_record.name,
+                clean_record.formula,
+                spectrum_json,
+                peaks_json,
+                clean_record.schema_version,
+                normalize_data_type(clean_record.data_type),
+            ),
+        )
 
     def delete_reference(self, reference_id: int) -> bool:
         """Delete one reference row by database id."""
@@ -546,6 +777,16 @@ def _json_list_length(payload: object) -> int:
     except (TypeError, json.JSONDecodeError):
         return 0
     return len(value) if isinstance(value, list) else 0
+
+
+def _json_payload_list(payload: object) -> list[object]:
+    if not payload:
+        return []
+    try:
+        value = json.loads(str(payload))
+    except (TypeError, json.JSONDecodeError):
+        return []
+    return value if isinstance(value, list) else []
 
 
 def _safe_path_label(path: Path) -> str:
