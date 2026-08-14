@@ -13,7 +13,7 @@
 
 <p align="center">
   <a href="https://github.com/pinkprincess766/ChromaTsvet/actions/workflows/ci.yml"><img src="https://github.com/pinkprincess766/ChromaTsvet/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
-  <img src="https://img.shields.io/badge/release-v0.2.0-2f855a" alt="Release v0.2.0">
+  <img src="https://img.shields.io/badge/release-v0.3.0-2f855a" alt="Release v0.3.0">
   <img src="https://img.shields.io/badge/Python-3.9%2B-3776ab" alt="Python 3.9+">
   <img src="https://img.shields.io/badge/Rust-PyO3-b7410e" alt="Rust and PyO3">
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-4c566a" alt="MIT license"></a>
@@ -37,12 +37,12 @@ ChromaTsvet объединяет десктопный интерфейс на Py
 
 ## Статус проекта
 
-ChromaTsvet v0.2.0 — alpha-релиз, запускаемый из исходного кода. Основной фокус
-версии — удобство повседневной работы: повторная загрузка файлов, более понятное
-состояние анализа, настраиваемые численные параметры и расширенный экспорт
-отчётов. Приложение уже подходит для локальных экспериментов, демонстраций и
-итеративной разработки научных инструментов, но пока не является
-сертифицированным лабораторным прибором.
+ChromaTsvet v0.3.0 — alpha-релиз с фокусом на воспроизводимость анализа,
+переносимость reference library и более простой вход для тестеров. Приложение
+можно запускать из исходного кода, а для GitHub Releases теперь можно собирать
+скачиваемые macOS/Windows app archives. ChromaTsvet уже подходит для локальных
+экспериментов, демонстраций и итеративной разработки научных инструментов, но
+пока не является сертифицированным лабораторным прибором.
 
 Для закрытого alpha-тестирования см. [Alpha Testing Guide](docs/testing_guide.md).
 В нём есть безопасные синтетические файлы, чеклист ручной проверки и инструкции
@@ -53,32 +53,28 @@ CI запускает Python- и Rust-тесты. Python-тесты теперь
 проверок поиска пиков. Идентификация по пикам доступна как прозрачная базовая
 реализация; старое косинусное сравнение сохранено как fallback для совместимости.
 
-## Что нового в v0.2
+## Что нового в v0.3
 
-v0.2 делает ежедневную работу со спектральными данными удобнее и менее
-повторяющейся.
+v0.3 делает результаты анализа проще для проверки, повторения, передачи и
+тестирования.
 
-**Улучшения рабочего процесса:**
+**Воспроизводимость анализа:**
 
-- Меню Recent Files для быстрого повторного открытия предыдущих спектров.
-- Запоминание последней директории в диалогах Open и Export.
-- Улучшенная строка состояния: имя файла, количество точек, количество пиков и состояние анализа.
-- Горячие клавиши для частых действий: Open, Analyze, Export PDF и настройки.
+- Processing Passport добавлен в экспортируемые отчёты.
+- Analysis session bundles сохраняют file-independent snapshot результата анализа.
+- Method presets помогают переиспользовать настройки поиска пиков.
 
-**Анализ и GUI:**
+**Peak review и reference libraries:**
 
-- Выбор оконной функции FFT доступен прямо в диалоге настроек анализа.
-- Параметры анализа настраиваются через интерфейс: sample rate, threshold, prominence, SNR, smoothing, baseline correction и normalization.
+- Peak Review помогает проверять accepted, rejected, manual и warning-heavy пики.
+- Доступно ручное добавление, редактирование и удаление пиков.
+- Reference libraries можно импортировать и экспортировать как переносимые JSON/CSV с обработкой дубликатов.
 
-**Данные и экспорт:**
+**Дистрибуция и тестирование:**
 
-- Более надёжный импорт CSV/TXT: заголовки, UTF-8 BOM, разделители, decimal comma и более понятные сообщения об ошибках.
-- Новые форматы отчётов: самодостаточный HTML и Excel workbook.
-
-**Тестирование:**
-
-- Поиск и запуск тестов через pytest.
-- Тестовая обвязка синтетических спектров для детерминированных регрессионных тестов.
+- Для GitHub Releases можно собирать macOS и Windows desktop archives.
+- Добавлены README workflow GIF и onboarding-документация для тестеров.
+- Архитектурные границы стали явнее: UI, экспорт, analysis state и reference persistence разделены лучше.
 
 ## Возможности
 
@@ -91,7 +87,11 @@ v0.2 делает ежедневную работу со спектральны�
 - Масштабирование спектра мышью.
 - Наложение второго проанализированного спектра на текущий график для визуального сравнения.
 - Повторное открытие недавних файлов, переиспользование последней директории и горячие клавиши.
+- Сохранение и загрузка analysis session bundles без встраивания приватных путей к исходным файлам.
+- Method presets для повторяемых настроек анализа.
+- Peak Review, ручное добавление пиков, редактирование metadata и исключение rejected пиков из экспорта.
 - Сравнение спектров с локальной SQLite-библиотекой эталонов и управление сохранёнными записями.
+- Импорт и экспорт reference-library records в переносимых JSON или CSV.
 - Экспорт найденных пиков с метаданными анализа в CSV и полных результатов анализа в PDF, HTML или Excel.
 - Экспорт текущего графика спектра в PNG или SVG.
 - Светлая и тёмная темы приложения.
@@ -120,6 +120,26 @@ v0.2 делает ежедневную работу со спектральны�
 `tools/capture_release_screenshots.py`; PNG-файлы предназначены для README и
 GitHub release notes. Для повторной генерации превью PDF нужен либо `pypdfium2`,
 либо Poppler `pdftoppm`.
+
+## Скачать приложение
+
+Для GitHub Releases в v0.3 можно собирать готовые desktop archives:
+
+```text
+ChromaTsvet-v0.3.0-macos-<architecture>.zip
+ChromaTsvet-v0.3.0-windows-<architecture>.zip
+SHA256SUMS-<platform>.txt
+```
+
+Скачайте архив для своей платформы из релиза и распакуйте его. На macOS откройте
+`ChromaTsvet.app`. На Windows откройте `ChromaTsvet.exe` из распакованной папки
+`ChromaTsvet`. Текущая macOS-сборка не подписана и не notarized, поэтому macOS
+может показать предупреждение безопасности при первом запуске. Если архив был
+получен не через GitHub Releases, проверьте его по соответствующему
+`SHA256SUMS`-файлу.
+
+Запуск из исходного кода остаётся основным способом для разработки и для
+платформ, где packaged app ещё нет.
 
 ## Быстрый старт
 
@@ -243,7 +263,7 @@ make rust
 QT_QPA_PLATFORM=offscreen python -m pytest tests/unit/test_synthetic_peak_detection.py -v
 ```
 
-Перегенерация PNG-скриншотов для v0.2:
+Перегенерация PNG-скриншотов для v0.3:
 
 ```bash
 QT_QPA_PLATFORM=offscreen python tools/capture_release_screenshots.py
@@ -259,6 +279,17 @@ QT_QPA_PLATFORM=offscreen python tools/capture_readme_demo_gif.py
 maturin и процедуры performance profiling. См. [Peak-Based Identification](docs/identification.md)
 для текущего сопоставления по пикам и legacy cosine fallback.
 
+Сборка release app archive для текущей платформы:
+
+```bash
+python tools/build_release_app.py
+```
+
+Готовые zip и checksum будут записаны в `release_artifacts/v0.3.0/`. Эта папка
+игнорируется git и нужна только как staging area для загрузки файлов в GitHub
+Release. Windows archive нужно собирать на Windows; если работаешь с macOS,
+используй ручной GitHub Actions workflow `Release Artifacts`.
+
 ## Архитектура
 
 ```text
@@ -269,10 +300,16 @@ python_analyzer/
   gui/error_messages.py      Вспомогательные функции для сообщений об ошибках
   gui/recent_files.py        Recent Files и запоминание последней директории
   gui/reference_library.py   Диалог управления reference library
+  gui/peak_editor.py         Диалог ручного добавления/редактирования пиков
   gui/theme.py               Помощники для Qt palette и stylesheet
   gui/log_view.py            Общее форматирование log view
   analysis/models.py         Dataclasses AnalysisSettings и LoadedSpectrum
   analysis/runner.py         Обёртка pipeline Filter -> Rust
+  analysis/method_presets.py Reusable analysis method presets
+  analysis/peak_review.py    Статусы и диагностика Peak Review
+  analysis/session_bundle.py Переносимые snapshots analysis session
+  analysis/processing_passport.py
+                             Processing metadata для exports
   analysis/windowing.py      Имена, labels и validation для FFT window
   exporters/excel_report.py  Экспорт книги Excel
   exporters/html_report.py   Экспорт самодостаточного HTML-отчёта
@@ -281,6 +318,10 @@ python_analyzer/
   readers/spectrum_reader.py Парсинг CSV/TXT-спектров
   viz/spectrum_plot.py       График спектра, частотная ось, peak markers
   core/identification.py     SQLite-backed reference matching
+  core/reference_library_io.py
+                             Portable reference import/export
+  core/reference_repository.py
+                             SQLite reference persistence
 
 rust_module/src/
   lib.rs                     PyO3 analysis pipeline
@@ -302,17 +343,20 @@ Python отвечает за работу с файлами, desktop UI и от�
 численный pipeline и возвращает обработанный спектр, частотную ось и структуры
 пиков через PyO3.
 
-## Область v0.2 и roadmap
+## Область v0.3 и roadmap
 
-Версия 0.2 улучшает повседневную работу вокруг уже существующей основы анализа.
-Приложение умеет загружать данные, настраивать анализ через GUI, визуализировать
-и экспортировать результаты, сохранять пользовательские настройки, открывать
-недавние файлы и создавать PDF, HTML, Excel и CSV со списком пиков.
+Версия 0.3 усиливает воспроизводимость, reviewability и release readiness вокруг
+уже существующей основы анализа. Приложение умеет загружать данные, настраивать
+анализ через GUI, визуализировать и экспортировать результаты, сохранять
+пользовательские настройки, открывать недавние файлы, сохранять analysis
+sessions, проверять и вручную корректировать пики, переносить reference libraries
+между машинами и создавать PDF, HTML, Excel, PNG, SVG и CSV со списком пиков.
 
 Следующие приоритеты разработки: более подробная диагностика peak matching,
-усиление сценариев работы с библиотекой эталонов, кроссплатформенные готовые сборки и
-более широкие синтетические и реальные регрессионные наборы данных. Модель идентификации
-описана в [Peak-Based Identification](docs/identification.md).
+более плотная обратная связь от реальных тестеров, кроссплатформенные
+подписанные/notarized сборки и более широкие синтетические и реальные
+регрессионные наборы данных. Модель идентификации описана в
+[Peak-Based Identification](docs/identification.md).
 
 ## Известные ограничения
 
@@ -321,7 +365,7 @@ ChromaTsvet всё ещё является **alpha** научным ПО. Он �
 сертифицированным лабораторным прибором**.
 
 - Идентификация по пикам и сценарии работы с библиотекой эталонов всё ещё развиваются.
-- Готовой packaged distribution пока нет; приложение запускается из исходного кода.
+- macOS app archives пока не подписаны и не notarized; packaged builds для Linux ещё нет.
 - Японская документация ([README.ja.md](README.ja.md)) может временно отставать от английского и русского README.
 
 ## Лицензия

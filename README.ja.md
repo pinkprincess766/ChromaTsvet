@@ -4,7 +4,7 @@
 
 **ChromaTsvet** は、CSV/TXT のスペクトルデータやクロマトグラムを読み込み、処理、可視化、簡易同定するためのデスクトップアプリケーションです。
 
-Python/PyQt による UI と Rust/PyO3 による信号処理コアを組み合わせています。v0.2.0 は日常的な作業フローを改善する alpha リリースであり、実験、デモ、今後の科学ツール開発の土台として使うことを目的としています。検証済みの研究機器ではありません。
+Python/PyQt による UI と Rust/PyO3 による信号処理コアを組み合わせています。v0.3.0 は解析の再現性、参照ライブラリの移植性、テスター向け導入を改善する alpha リリースであり、実験、デモ、今後の科学ツール開発の土台として使うことを目的としています。検証済みの研究機器ではありません。
 
 クローズド alpha テスト向けの手順は [Alpha Testing Guide](docs/testing_guide.md) を参照してください。`examples/alpha/` には、プライベートデータを使わずにインポート、解析、プロット、エクスポートを確認するための合成サンプルがあります。
 
@@ -26,11 +26,26 @@ Python/PyQt による UI と Rust/PyO3 による信号処理コアを組み合�
 - ピークのグラフ表示とテーブル表示
 - 2 つ目の解析済みスペクトルを重ねて表示
 - Recent Files、最後に使ったディレクトリ、基本的な keyboard shortcuts
+- Processing Passport と analysis session bundle
+- method presets と manual peak editing
 - SQLite 参照ライブラリとの簡易比較と保存済み参照の管理
+- 参照ライブラリの JSON / CSV import/export
 - ピーク CSV エクスポート
 - PDF / HTML / Excel レポート出力
 - グラフの PNG / SVG エクスポート
 - light / dark theme
+
+## アプリのダウンロード
+
+v0.3 の GitHub Release には macOS と Windows 向け app archive を添付できます。
+
+```text
+ChromaTsvet-v0.3.0-macos-<architecture>.zip
+ChromaTsvet-v0.3.0-windows-<architecture>.zip
+SHA256SUMS-<platform>.txt
+```
+
+現在の macOS build は署名されておらず notarized でもありません。そのため、初回起動時に macOS のセキュリティ警告が表示される場合があります。Windows archive は Windows 上、または GitHub Actions の `Release Artifacts` workflow でビルドします。
 
 ## ソースからの起動
 
