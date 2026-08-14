@@ -13,7 +13,7 @@
 
 <p align="center">
   <a href="https://github.com/pinkprincess766/ChromaTsvet/actions/workflows/ci.yml"><img src="https://github.com/pinkprincess766/ChromaTsvet/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
-  <img src="https://img.shields.io/badge/release-v0.2.0-2f855a" alt="Release v0.2.0">
+  <img src="https://img.shields.io/badge/release-v0.3.0-2f855a" alt="Release v0.3.0">
   <img src="https://img.shields.io/badge/Python-3.9%2B-3776ab" alt="Python 3.9+">
   <img src="https://img.shields.io/badge/Rust-PyO3-b7410e" alt="Rust and PyO3">
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-4c566a" alt="MIT license"></a>
@@ -36,11 +36,12 @@ Semyonovich Tsvet, the botanist who invented chromatography.
 
 ## Project Status
 
-ChromaTsvet v0.2.0 is an alpha, source-based release focused on everyday
-workflow: repeated file loading, clearer analysis state, configurable numerical
-settings, and richer report export. It is ready for local experiments,
-demonstrations, and iterative scientific tooling work, but it is not yet a
-validated laboratory instrument.
+ChromaTsvet v0.3.0 is an alpha release focused on scientific traceability,
+reference-library portability, and easier tester onboarding. It can be run from
+source, and macOS/Windows release builds can now be produced as downloadable app
+archives for GitHub Releases. It is ready for local experiments, demonstrations, and
+iterative scientific tooling work, but it is not yet a validated laboratory
+instrument.
 
 For guided closed-alpha testing, see the [Alpha Testing Guide](docs/testing_guide.md).
 The guide includes safe synthetic sample files, a manual verification checklist,
@@ -52,32 +53,28 @@ regression checks around peak detection. Peak-based identification is available
 as an inspectable baseline with legacy cosine matching kept as a compatibility
 fallback.
 
-## What's New in v0.2
+## What's New in v0.3
 
-v0.2 focuses on making daily work with spectral data more convenient and less
-repetitive.
+v0.3 focuses on making analysis results easier to inspect, reproduce, share,
+and test.
 
-**Workflow improvements:**
+**Analysis traceability:**
 
-- Recent Files menu for quickly reopening previous spectra.
-- Remembered last directory across Open and Export dialogs.
-- Improved status bar showing filename, point count, peak count, and analysis state.
-- Keyboard shortcuts for common actions such as Open, Analyze, Export PDF, and settings.
+- Processing Passport data is included in report exports.
+- Analysis session bundles preserve the file-independent analysis snapshot.
+- Method presets make repeated peak-detection workflows easier to reuse.
 
-**Analysis and GUI:**
+**Peak review and reference libraries:**
 
-- FFT window selection is available directly in the analysis settings dialog.
-- Analysis parameters are controlled from the GUI, including sample rate, threshold, prominence, SNR, smoothing, baseline correction, and normalization.
+- Peak Review helps inspect accepted, rejected, manual, and warning-heavy peaks.
+- Manual peak add/edit/remove is available for reviewer-controlled corrections.
+- Reference libraries can be imported and exported as portable JSON/CSV data with duplicate handling.
 
-**Data handling and export:**
+**Distribution and testing:**
 
-- More robust CSV/TXT import for headers, UTF-8 BOM, delimiters, decimal comma data, and clearer error messages.
-- New report export formats: self-contained HTML and Excel workbook.
-
-**Testing:**
-
-- Pytest-based test discovery and configuration.
-- Synthetic spectrum test harness for deterministic regression tests.
+- macOS and Windows desktop archives can be built for GitHub Releases.
+- README workflow GIF and tester onboarding documentation are included.
+- Architecture boundaries were tightened to keep UI, exports, analysis state, and reference persistence more explicit.
 
 ## Highlights
 
@@ -90,7 +87,11 @@ repetitive.
 - Zoom into the spectrum with the mouse.
 - Overlay a second analyzed spectrum on the current graph for visual comparison.
 - Reopen recent files, reuse the last working directory, and use workflow keyboard shortcuts.
+- Save and reload analysis session bundles without embedding private source-file paths.
+- Use method presets for repeatable analysis settings.
+- Review peaks, add manual peaks, edit peak metadata, and exclude rejected peaks from exports.
 - Compare spectra against a local SQLite reference library and manage stored references.
+- Import or export reference-library records as portable JSON or CSV.
 - Export detected peaks with analysis metadata to CSV and complete analysis results to PDF, HTML, or Excel.
 - Export the current spectrum graph as PNG or SVG.
 - Use light and dark application themes.
@@ -119,6 +120,26 @@ components at 95 Hz, 240 Hz, and 410 Hz. They can be regenerated with
 `tools/capture_release_screenshots.py`; the PNG files are intended for the
 README and GitHub release notes. Regenerating the PDF preview requires either
 `pypdfium2` or Poppler's `pdftoppm`.
+
+## Download App
+
+For GitHub Releases, v0.3 can provide ready-to-run desktop archives:
+
+```text
+ChromaTsvet-v0.3.0-macos-<architecture>.zip
+ChromaTsvet-v0.3.0-windows-<architecture>.zip
+SHA256SUMS-<platform>.txt
+```
+
+Download the archive for your platform from the release page and unzip it. On
+macOS, open `ChromaTsvet.app`. On Windows, open `ChromaTsvet.exe` from the
+unzipped `ChromaTsvet` folder. The current macOS build is unsigned and not
+notarized, so macOS may show a security warning on first launch. Verify the
+archive with the matching `SHA256SUMS` file if you received it outside GitHub
+Releases.
+
+Source checkout installation remains available for development and for platforms
+without a packaged app yet.
 
 ## Getting Started
 
@@ -241,7 +262,7 @@ Run the deterministic synthetic spectrum regression tests:
 QT_QPA_PLATFORM=offscreen python -m pytest tests/unit/test_synthetic_peak_detection.py -v
 ```
 
-Regenerate the v0.2 PNG screenshot set:
+Regenerate the v0.3 PNG screenshot set:
 
 ```bash
 QT_QPA_PLATFORM=offscreen python tools/capture_release_screenshots.py
@@ -257,6 +278,17 @@ See [Development Notes](docs/development.md) for the current maturin workflow
 and performance profiling procedure. See [Peak-Based Identification](docs/identification.md)
 for the current peak-based matcher and legacy cosine fallback behavior.
 
+Build the release app archive for the current platform:
+
+```bash
+python tools/build_release_app.py
+```
+
+The generated zip and checksum are written to `release_artifacts/v0.3.0/`. This
+folder is ignored by git and is intended only as a staging area for GitHub
+Release uploads. Windows archives must be built on Windows; use the manual
+`Release Artifacts` GitHub Actions workflow when building from a macOS machine.
+
 ## Architecture
 
 ```text
@@ -267,10 +299,16 @@ python_analyzer/
   gui/error_messages.py      User-facing error message helpers
   gui/recent_files.py        Recent Files and remembered directory helpers
   gui/reference_library.py   Reference library management dialog
+  gui/peak_editor.py         Manual peak add/edit dialog
   gui/theme.py               Qt palette and stylesheet helpers
   gui/log_view.py            Shared log-view formatting
   analysis/models.py         AnalysisSettings and LoadedSpectrum dataclasses
   analysis/runner.py         Filter -> Rust pipeline wrapper
+  analysis/method_presets.py Reusable analysis method presets
+  analysis/peak_review.py    Peak review status and diagnostics
+  analysis/session_bundle.py Portable analysis session snapshots
+  analysis/processing_passport.py
+                             Processing metadata for report exports
   analysis/windowing.py      FFT window names, labels, and validation
   exporters/excel_report.py  Excel workbook export
   exporters/html_report.py   Self-contained HTML report export
@@ -279,6 +317,10 @@ python_analyzer/
   readers/spectrum_reader.py CSV/TXT spectrum parsing
   viz/spectrum_plot.py       Spectrum plotting, frequency axis, peak markers
   core/identification.py     SQLite-backed reference matching
+  core/reference_library_io.py
+                             Portable reference import/export
+  core/reference_repository.py
+                             SQLite reference persistence
 
 rust_module/src/
   lib.rs                     PyO3 analysis pipeline
@@ -300,17 +342,19 @@ Python owns file handling, the desktop UI, and reporting. Rust owns the numerica
 pipeline and returns the processed spectrum, frequency axis, and peak structures
 through PyO3.
 
-## v0.2 Scope and Roadmap
+## v0.3 Scope and Roadmap
 
-Version 0.2 improves the daily workflow around the existing analysis foundation. The
-application can load data, tune analysis settings from the GUI, visualize and
-export results, preserve user settings, reopen recent files, and produce PDF,
-HTML, Excel, and peak CSV outputs.
+Version 0.3 improves traceability, reviewability, and release readiness around
+the existing analysis foundation. The application can load data, tune analysis
+settings from the GUI, visualize and export results, preserve user settings,
+reopen recent files, save analysis sessions, review/manual-correct peaks, move
+reference libraries between machines, and produce PDF, HTML, Excel, PNG, SVG,
+and peak CSV outputs.
 
 The next development priorities are richer peak-match diagnostics, stronger
-reference-library workflows, cross-platform packaged builds, and broader
-synthetic and real-world regression datasets. The identification model is
-outlined in [Peak-Based Identification](docs/identification.md).
+real-world tester feedback loops, cross-platform signed/notarized builds, and
+broader synthetic and real-world regression datasets. The identification model
+is outlined in [Peak-Based Identification](docs/identification.md).
 
 ## Known Limitations
 
@@ -319,7 +363,7 @@ experiments, inspection, development, and educational purposes, but it is **not 
 certified laboratory instrument**.
 
 - Peak-based identification and reference-library workflows are still evolving.
-- There is no packaged distribution yet; the application is currently run from source.
+- macOS app archives are unsigned and not notarized; Linux packaged builds are not available yet.
 - Japanese documentation ([README.ja.md](README.ja.md)) may temporarily lag behind the English README.
 
 ## License

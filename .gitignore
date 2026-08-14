@@ -17,6 +17,7 @@ env/
 # Python build artifacts
 build/
 dist/
+release_artifacts/
 downloads/
 eggs/
 .eggs/
