@@ -24,6 +24,7 @@ ASSETS_DIR = PROJECT_ROOT / "assets"
 LOGO_PATH = ASSETS_DIR / "chromatsvet_logo.png"
 BUILD_ROOT = PROJECT_ROOT / "build" / "pyinstaller"
 DIST_ROOT = PROJECT_ROOT / "dist" / "pyinstaller"
+WHEEL_ROOT = BUILD_ROOT / "wheels"
 
 
 class BuildError(RuntimeError):
@@ -110,17 +111,41 @@ def ensure_rust_extension(skip_maturin: bool) -> None:
     if skip_maturin:
         print("Skipping maturin build by request.")
         return
+    if WHEEL_ROOT.exists():
+        safe_remove(WHEEL_ROOT)
+    WHEEL_ROOT.mkdir(parents=True, exist_ok=True)
+
+    # Build a wheel instead of using `maturin develop`: GitHub runners do not
+    # provide an activated virtualenv, but pip can install a freshly built wheel.
     run(
         [
             sys.executable,
             "-m",
             "maturin",
-            "develop",
+            "build",
             "--manifest-path",
             str(RUST_MANIFEST),
             "--release",
+            "--out",
+            str(WHEEL_ROOT),
         ],
+        cwd=RUST_MANIFEST.parent,
         env=rust_build_env(),
+    )
+    wheels = sorted(WHEEL_ROOT.glob("*.whl"), key=lambda path: path.stat().st_mtime)
+    if not wheels:
+        raise BuildError(f"maturin did not produce a wheel in {WHEEL_ROOT}")
+    run(
+        [
+            sys.executable,
+            "-m",
+            "pip",
+            "install",
+            "--force-reinstall",
+            "--no-deps",
+            str(wheels[-1]),
+        ],
+        env=pip_env(),
     )
 
 
@@ -136,6 +161,19 @@ def rust_build_env() -> dict[str, str]:
     existing_flags = env.get("RUSTFLAGS", "").strip()
     remap_flags = " ".join(f"--remap-path-prefix={mapping}" for mapping in remaps)
     env["RUSTFLAGS"] = f"{existing_flags} {remap_flags}".strip()
+    return env
+
+
+def pip_env() -> dict[str, str]:
+    env = dict(os.environ)
+    env["PIP_CACHE_DIR"] = str(BUILD_ROOT / "pip-cache")
+    env["PIP_DISABLE_PIP_VERSION_CHECK"] = "1"
+    return env
+
+
+def pyinstaller_env() -> dict[str, str]:
+    env = dict(os.environ)
+    env["PYINSTALLER_CONFIG_DIR"] = str(BUILD_ROOT / "pyinstaller-config")
     return env
 
 
@@ -199,7 +237,7 @@ def build_app(icon_path: Path | None) -> Path:
         command.extend(["--icon", str(icon_path)])
     command.append(str(ENTRY_POINT))
 
-    run(command)
+    run(command, env=pyinstaller_env())
     if not output_path.exists():
         raise BuildError(f"PyInstaller did not produce {output_path}")
     return output_path
