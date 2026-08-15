@@ -1,3 +1,6 @@
+import logging
+import sqlite3
+
 from PyQt5.QtWidgets import QDialog
 
 from python_analyzer.analysis.models import ReferencePeak
@@ -38,22 +41,39 @@ def test_reference_metadata_update_preserves_stored_signal_data():
             "Reviewed Raman",
             "C7H8",
             "RAMAN!",
+            description="Certified Raman reference",
+            cas_number="108-88-3",
+            manufacturer="Example Standards",
+            categories=("Aromatic", "Solvent"),
         )
 
         updated = {
             item.name: item for item in identifier.list_references()
         }["Reviewed Raman"]
         row = identifier.conn.execute(
-            "SELECT formula, data_type, peaks_json FROM compounds WHERE id = ?",
+            """
+            SELECT formula, data_type, peaks_json, description, cas_number,
+                   manufacturer, categories_json, schema_version
+            FROM compounds WHERE id = ?
+            """,
             (entry.reference_id,),
         ).fetchone()
 
         assert updated.formula == "C7H8"
         assert updated.data_type == "raman"
+        assert updated.description == "Certified Raman reference"
+        assert updated.cas_number == "108-88-3"
+        assert updated.manufacturer == "Example Standards"
+        assert updated.categories == ("Aromatic", "Solvent")
         assert updated.peak_count == 1
         assert row[0] == "C7H8"
         assert row[1] == "raman"
         assert "100.0" in row[2]
+        assert row[3] == "Certified Raman reference"
+        assert row[4] == "108-88-3"
+        assert row[5] == "Example Standards"
+        assert row[6] == '["Aromatic", "Solvent"]'
+        assert row[7] == 3
     finally:
         identifier.close()
 
@@ -65,6 +85,11 @@ def test_reference_metadata_update_rejects_invalid_inputs():
 
         assert not identifier.update_reference_metadata(entry.reference_id, "   ")
         assert not identifier.update_reference_metadata(0, "Valid")
+        assert not identifier.update_reference_metadata(
+            entry.reference_id,
+            "Valid",
+            cas_number="64-17-6",
+        )
 
         unchanged = {
             item.reference_id: item for item in identifier.list_references()
@@ -109,6 +134,93 @@ def test_reference_repository_rejects_unknown_migration_columns():
         identifier.close()
 
 
+def test_reference_repository_migrates_legacy_database_without_data_loss(tmp_path):
+    database_path = tmp_path / "legacy.db"
+    connection = sqlite3.connect(database_path)
+    connection.execute(
+        """
+        CREATE TABLE compounds (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL,
+            formula TEXT,
+            spectrum TEXT
+        )
+        """
+    )
+    connection.execute(
+        "INSERT INTO compounds (name, formula, spectrum) VALUES (?, ?, ?)",
+        ("Legacy", "H2O", "[1.0, 2.0]"),
+    )
+    connection.commit()
+    connection.close()
+
+    identifier = SpectrumIdentifier(database_path)
+    try:
+        entry = identifier.list_references()[0]
+        columns = {
+            row[1] for row in identifier.conn.execute("PRAGMA table_info(compounds)")
+        }
+    finally:
+        identifier.close()
+
+    assert entry.name == "Legacy"
+    assert entry.formula == "H2O"
+    assert entry.description == ""
+    assert entry.cas_number == ""
+    assert entry.manufacturer == ""
+    assert entry.categories == ()
+    assert {
+        "description",
+        "cas_number",
+        "manufacturer",
+        "categories_json",
+    }.issubset(columns)
+
+
+def test_reference_repository_does_not_log_rejected_private_name(caplog):
+    identifier = SpectrumIdentifier(":memory:")
+    private_name = "/Users/example/private/reference\nname"
+    try:
+        with caplog.at_level(logging.ERROR, logger="chromatsvet.reference_repository"):
+            assert not identifier.add_reference(private_name, [float("nan")])
+    finally:
+        identifier.close()
+
+    assert private_name not in caplog.text
+    assert "/Users/example" not in caplog.text
+
+
+def test_reference_listing_sanitizes_manually_corrupted_database_text():
+    identifier = SpectrumIdentifier(":memory:")
+    try:
+        identifier.conn.execute(
+            """
+            INSERT INTO compounds
+            (name, formula, spectrum, description, cas_number, manufacturer)
+            VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (
+                "Unsafe\nName\u202e",
+                "H2O\t",
+                "[]",
+                "Description\u0000",
+                "7732-18-5\n",
+                "Lab\tName",
+            ),
+        )
+        identifier.conn.commit()
+
+        entry = identifier.list_references()[0]
+    finally:
+        identifier.close()
+
+    assert entry.name == "Unsafe Name"
+    assert entry.formula == "H2O"
+    assert entry.description == "Description"
+    assert entry.cas_number == "7732-18-5"
+    assert entry.manufacturer == "Lab Name"
+
+
 def test_reference_library_dialog_filters_by_text_and_data_type(qapp):
     identifier = make_identifier_with_references()
     try:
@@ -138,6 +250,10 @@ def test_reference_library_dialog_edits_selected_metadata(qapp, monkeypatch):
         reference_name = "Edited Legacy"
         formula = "EL"
         data_type = "uv_vis"
+        description = "Updated description"
+        cas_number = "7732-18-5"
+        manufacturer = "Standards Lab"
+        categories = ("Water", "Calibration")
 
         def __init__(self, parent, entry):
             self.entry = entry
@@ -162,6 +278,40 @@ def test_reference_library_dialog_edits_selected_metadata(qapp, monkeypatch):
         assert "Edited Legacy" in entries
         assert entries["Edited Legacy"].formula == "EL"
         assert entries["Edited Legacy"].data_type == "uv_vis"
+        assert entries["Edited Legacy"].description == "Updated description"
+        assert entries["Edited Legacy"].cas_number == "7732-18-5"
+        assert entries["Edited Legacy"].manufacturer == "Standards Lab"
+        assert entries["Edited Legacy"].categories == ("Water", "Calibration")
+    finally:
+        identifier.close()
+        dialog.close()
+
+
+def test_reference_library_dialog_searches_and_filters_extended_metadata(qapp):
+    identifier = make_identifier_with_references()
+    try:
+        entry = next(
+            item for item in identifier.list_references() if item.name == "Raman Peak"
+        )
+        assert identifier.update_reference_metadata(
+            entry.reference_id,
+            entry.name,
+            entry.formula,
+            entry.data_type,
+            description="Quality-control aromatic standard",
+            cas_number="108-88-3",
+            manufacturer="Reference Works",
+            categories=("QC", "Aromatic"),
+        )
+
+        dialog = ReferenceLibraryDialog(None, identifier)
+        dialog.search_edit.setText("108-88-3")
+        assert [item.name for item in dialog.visible_entries] == ["Raman Peak"]
+
+        dialog.search_edit.clear()
+        category_index = dialog.category_filter.findData("Aromatic")
+        dialog.category_filter.setCurrentIndex(category_index)
+        assert [item.name for item in dialog.visible_entries] == ["Raman Peak"]
     finally:
         identifier.close()
         dialog.close()
