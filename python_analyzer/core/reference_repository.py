@@ -18,6 +18,10 @@ from python_analyzer.core.peak_matching import (
     peak_to_reference_peak,
 )
 from python_analyzer.core.reference_library_io import (
+    MAX_REFERENCE_CAS_LENGTH,
+    MAX_REFERENCE_DESCRIPTION_LENGTH,
+    MAX_REFERENCE_MANUFACTURER_LENGTH,
+    REFERENCE_METADATA_SCHEMA_VERSION,
     ReferenceImportPreview,
     ReferenceImportResult,
     ReferenceLibraryRecord,
@@ -25,7 +29,10 @@ from python_analyzer.core.reference_library_io import (
     canonical_reference_name,
     coerce_reference_record,
     merge_reference_records,
+    normalize_cas_number,
     normalize_duplicate_policy,
+    normalize_reference_categories,
+    validate_reference_collection_limits,
 )
 
 
@@ -37,6 +44,10 @@ KNOWN_COLUMN_DEFINITIONS = {
     "peaks_json": "TEXT",
     "schema_version": "INTEGER DEFAULT 1",
     "data_type": "TEXT DEFAULT 'generic'",
+    "description": "TEXT DEFAULT ''",
+    "cas_number": "TEXT DEFAULT ''",
+    "manufacturer": "TEXT DEFAULT ''",
+    "categories_json": "TEXT DEFAULT '[]'",
 }
 
 
@@ -51,6 +62,10 @@ class ReferenceLibraryEntry:
     schema_version: int
     spectrum_points: int
     peak_count: int
+    description: str = ""
+    cas_number: str = ""
+    manufacturer: str = ""
+    categories: tuple[str, ...] = ()
 
 
 class ReferenceRepository:
@@ -96,12 +111,15 @@ class ReferenceRepository:
                 spectrum TEXT,
                 peaks_json TEXT,
                 schema_version INTEGER DEFAULT 1,
-                data_type TEXT DEFAULT 'generic'
+                data_type TEXT DEFAULT 'generic',
+                description TEXT DEFAULT '',
+                cas_number TEXT DEFAULT '',
+                manufacturer TEXT DEFAULT '',
+                categories_json TEXT DEFAULT '[]'
             )
         """)
-        self._add_known_column_if_missing("peaks_json")
-        self._add_known_column_if_missing("schema_version")
-        self._add_known_column_if_missing("data_type")
+        for column_name in KNOWN_COLUMN_DEFINITIONS:
+            self._add_known_column_if_missing(column_name)
         self.conn.commit()
 
     def _add_known_column_if_missing(self, column_name: str) -> None:
@@ -130,6 +148,10 @@ class ReferenceRepository:
         formula: str = "",
         peaks: list[ReferencePeak] | None = None,
         data_type: str = "generic",
+        description: str = "",
+        cas_number: str = "",
+        manufacturer: str = "",
+        categories: list[str] | tuple[str, ...] | str = (),
     ) -> bool:
         """Add or update a reference row after sanitizing numeric payloads."""
 
@@ -146,11 +168,36 @@ class ReferenceRepository:
                 max_length=MAX_FORMULA_LENGTH,
                 allow_empty=True,
             )
+            clean_description = _safe_user_text(
+                description,
+                label="description",
+                max_length=MAX_REFERENCE_DESCRIPTION_LENGTH,
+                allow_empty=True,
+            )
+            clean_cas_number = normalize_cas_number(cas_number)
+            clean_manufacturer = _safe_user_text(
+                manufacturer,
+                label="manufacturer",
+                max_length=MAX_REFERENCE_MANUFACTURER_LENGTH,
+                allow_empty=True,
+            )
+            clean_categories = normalize_reference_categories(categories)
 
             spectrum_json = None
             peaks_json = None
             normalized_data_type = normalize_data_type(data_type)
-            schema_ver = 2 if peaks else 1
+            has_extended_metadata = bool(
+                clean_description
+                or clean_cas_number
+                or clean_manufacturer
+                or clean_categories
+            )
+            if has_extended_metadata:
+                schema_ver = REFERENCE_METADATA_SCHEMA_VERSION
+            elif peaks:
+                schema_ver = 2
+            else:
+                schema_ver = 1
 
             if intensities is not None:
                 clean_intensities = []
@@ -192,8 +239,9 @@ class ReferenceRepository:
             self.conn.execute(
                 """
                 INSERT OR REPLACE INTO compounds
-                (name, formula, spectrum, peaks_json, schema_version, data_type)
-                VALUES (?, ?, ?, ?, ?, ?)
+                (name, formula, spectrum, peaks_json, schema_version, data_type,
+                 description, cas_number, manufacturer, categories_json)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     clean_name,
@@ -202,6 +250,10 @@ class ReferenceRepository:
                     peaks_json,
                     schema_ver,
                     normalized_data_type,
+                    clean_description,
+                    clean_cas_number,
+                    clean_manufacturer,
+                    json.dumps(list(clean_categories), ensure_ascii=False),
                 ),
             )
             self.conn.commit()
@@ -209,8 +261,7 @@ class ReferenceRepository:
             return True
         except Exception as exc:
             logger.error(
-                "Could not add reference substance %r (%s)",
-                name,
+                "Could not add reference substance (%s)",
                 type(exc).__name__,
             )
             return False
@@ -230,7 +281,8 @@ class ReferenceRepository:
 
         cursor = self.conn.execute(
             """
-            SELECT id, name, formula, spectrum, peaks_json, schema_version, data_type
+            SELECT id, name, formula, spectrum, peaks_json, schema_version, data_type,
+                   description, cas_number, manufacturer, categories_json
             FROM compounds
             ORDER BY lower(name), id
             """
@@ -245,12 +297,29 @@ class ReferenceRepository:
                 peaks_json,
                 schema_version,
                 data_type,
+                description,
+                cas_number,
+                manufacturer,
+                categories_json,
             ) = row
             entries.append(
                 ReferenceLibraryEntry(
                     reference_id=int(reference_id),
-                    name=str(name or ""),
-                    formula=str(formula or ""),
+                    name=_safe_log_text(name, max_length=MAX_REFERENCE_NAME_LENGTH),
+                    formula=_safe_log_text(formula, max_length=MAX_FORMULA_LENGTH),
+                    description=_safe_log_text(
+                        description,
+                        max_length=MAX_REFERENCE_DESCRIPTION_LENGTH,
+                    ),
+                    cas_number=_safe_log_text(
+                        cas_number,
+                        max_length=MAX_REFERENCE_CAS_LENGTH,
+                    ),
+                    manufacturer=_safe_log_text(
+                        manufacturer,
+                        max_length=MAX_REFERENCE_MANUFACTURER_LENGTH,
+                    ),
+                    categories=_safe_categories(categories_json),
                     data_type=normalize_data_type(data_type),
                     schema_version=_safe_int(schema_version, default=1),
                     spectrum_points=_json_list_length(spectrum_json),
@@ -290,6 +359,14 @@ class ReferenceRepository:
         """Import portable references with an explicit duplicate-name policy."""
 
         policy = normalize_duplicate_policy(duplicate_policy)
+        try:
+            validate_reference_collection_limits(records)
+        except (TypeError, ValueError) as exc:
+            logger.warning(
+                "Rejected oversized reference-library import (%s)",
+                type(exc).__name__,
+            )
+            return ReferenceImportResult(failed=len(records))
         added = merged = replaced = skipped = failed = 0
 
         for raw_record in records:
@@ -340,7 +417,8 @@ class ReferenceRepository:
         reference_ids: list[int] | None = None,
     ) -> list[tuple]:
         query = (
-            "SELECT id, name, formula, spectrum, peaks_json, schema_version, data_type "
+            "SELECT id, name, formula, spectrum, peaks_json, schema_version, data_type, "
+            "description, cas_number, manufacturer, categories_json "
             "FROM compounds"
         )
         params: list[int] = []
@@ -368,6 +446,10 @@ class ReferenceRepository:
             peaks_json,
             schema_version,
             data_type,
+            description,
+            cas_number,
+            manufacturer,
+            categories_json,
         ) = row
         try:
             spectrum_values = _json_payload_list(spectrum_json)
@@ -376,6 +458,10 @@ class ReferenceRepository:
                 ReferenceLibraryRecord(
                     name=str(name or ""),
                     formula=str(formula or ""),
+                    description=str(description or ""),
+                    cas_number=str(cas_number or ""),
+                    manufacturer=str(manufacturer or ""),
+                    categories=_safe_categories(categories_json),
                     data_type=normalize_data_type(data_type),
                     schema_version=_safe_int(schema_version, default=1),
                     spectrum=tuple(spectrum_values),
@@ -470,8 +556,9 @@ class ReferenceRepository:
         self.conn.execute(
             """
             INSERT INTO compounds
-            (name, formula, spectrum, peaks_json, schema_version, data_type)
-            VALUES (?, ?, ?, ?, ?, ?)
+            (name, formula, spectrum, peaks_json, schema_version, data_type,
+             description, cas_number, manufacturer, categories_json)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 clean_record.name,
@@ -480,6 +567,10 @@ class ReferenceRepository:
                 peaks_json,
                 clean_record.schema_version,
                 normalize_data_type(clean_record.data_type),
+                clean_record.description,
+                clean_record.cas_number,
+                clean_record.manufacturer,
+                json.dumps(list(clean_record.categories), ensure_ascii=False),
             ),
         )
 
@@ -513,6 +604,10 @@ class ReferenceRepository:
         name: str,
         formula: str = "",
         data_type: str = "generic",
+        description: str = "",
+        cas_number: str = "",
+        manufacturer: str = "",
+        categories: list[str] | tuple[str, ...] | str = (),
     ) -> bool:
         """Update editable reference metadata without touching stored signal data."""
 
@@ -533,17 +628,46 @@ class ReferenceRepository:
                 max_length=MAX_FORMULA_LENGTH,
                 allow_empty=True,
             )
+            clean_description = _safe_user_text(
+                description,
+                label="description",
+                max_length=MAX_REFERENCE_DESCRIPTION_LENGTH,
+                allow_empty=True,
+            )
+            clean_cas_number = normalize_cas_number(cas_number)
+            clean_manufacturer = _safe_user_text(
+                manufacturer,
+                label="manufacturer",
+                max_length=MAX_REFERENCE_MANUFACTURER_LENGTH,
+                allow_empty=True,
+            )
+            clean_categories = normalize_reference_categories(categories)
+            metadata_schema_version = (
+                REFERENCE_METADATA_SCHEMA_VERSION
+                if clean_description
+                or clean_cas_number
+                or clean_manufacturer
+                or clean_categories
+                else 1
+            )
 
             cursor = self.conn.execute(
                 """
                 UPDATE compounds
-                SET name = ?, formula = ?, data_type = ?
+                SET name = ?, formula = ?, data_type = ?, description = ?,
+                    cas_number = ?, manufacturer = ?, categories_json = ?,
+                    schema_version = MAX(COALESCE(schema_version, 1), ?)
                 WHERE id = ?
                 """,
                 (
                     clean_name,
                     clean_formula,
                     normalize_data_type(data_type),
+                    clean_description,
+                    clean_cas_number,
+                    clean_manufacturer,
+                    json.dumps(list(clean_categories), ensure_ascii=False),
+                    metadata_schema_version,
                     normalized_id,
                 ),
             )
@@ -648,6 +772,13 @@ def _json_payload_list(payload: object) -> list[object]:
     except (TypeError, json.JSONDecodeError):
         return []
     return value if isinstance(value, list) else []
+
+
+def _safe_categories(payload: object) -> tuple[str, ...]:
+    try:
+        return normalize_reference_categories(_json_payload_list(payload))
+    except ValueError:
+        return tuple()
 
 
 def _safe_path_label(path: Path) -> str:

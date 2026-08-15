@@ -85,6 +85,10 @@ class SpectrumIdentifier:
         formula: str = "",
         peaks: list[ReferencePeak] | None = None,
         data_type: str = "generic",
+        description: str = "",
+        cas_number: str = "",
+        manufacturer: str = "",
+        categories: list[str] | tuple[str, ...] | str = (),
     ) -> bool:
         return self.repository.add_reference(
             name,
@@ -92,6 +96,10 @@ class SpectrumIdentifier:
             formula,
             peaks=peaks,
             data_type=data_type,
+            description=description,
+            cas_number=cas_number,
+            manufacturer=manufacturer,
+            categories=categories,
         )
 
     def clear_database(self) -> bool:
@@ -128,12 +136,20 @@ class SpectrumIdentifier:
         name: str,
         formula: str = "",
         data_type: str = "generic",
+        description: str = "",
+        cas_number: str = "",
+        manufacturer: str = "",
+        categories: list[str] | tuple[str, ...] | str = (),
     ) -> bool:
         return self.repository.update_reference_metadata(
             reference_id,
             name,
             formula=formula,
             data_type=data_type,
+            description=description,
+            cas_number=cas_number,
+            manufacturer=manufacturer,
+            categories=categories,
         )
 
     def restore_default(self) -> bool:

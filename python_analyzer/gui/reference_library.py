@@ -19,6 +19,7 @@ from PyQt5.QtWidgets import (
     QPushButton,
     QTableWidget,
     QTableWidgetItem,
+    QTextEdit,
     QVBoxLayout,
 )
 
@@ -29,8 +30,15 @@ from python_analyzer.core.identification import (
 )
 from python_analyzer.core.reference_library_io import (
     DUPLICATE_POLICIES,
+    MAX_REFERENCE_CAS_LENGTH,
+    MAX_REFERENCE_DESCRIPTION_LENGTH,
+    MAX_REFERENCE_FORMULA_LENGTH,
+    MAX_REFERENCE_MANUFACTURER_LENGTH,
+    MAX_REFERENCE_NAME_LENGTH,
     ReferenceImportPreview,
     ReferenceLibraryFormatError,
+    ReferenceLibraryRecord,
+    coerce_reference_record,
     read_reference_csv,
     read_reference_json,
     write_reference_csv,
@@ -44,13 +52,23 @@ class ReferenceMetadataDialog(QDialog):
     def __init__(self, parent, entry: ReferenceLibraryEntry) -> None:
         super().__init__(parent)
         self.setWindowTitle("Edit Reference")
-        self.setMinimumWidth(360)
+        self.setMinimumWidth(480)
+        self._normalized_record: ReferenceLibraryRecord | None = None
 
         layout = QVBoxLayout(self)
         form = QFormLayout()
 
         self.name_edit = QLineEdit(entry.name)
+        self.name_edit.setMaxLength(MAX_REFERENCE_NAME_LENGTH)
         self.formula_edit = QLineEdit(entry.formula)
+        self.formula_edit.setMaxLength(MAX_REFERENCE_FORMULA_LENGTH)
+        self.cas_edit = QLineEdit(entry.cas_number)
+        self.cas_edit.setMaxLength(MAX_REFERENCE_CAS_LENGTH)
+        self.manufacturer_edit = QLineEdit(entry.manufacturer)
+        self.manufacturer_edit.setMaxLength(MAX_REFERENCE_MANUFACTURER_LENGTH)
+        self.categories_edit = QLineEdit(", ".join(entry.categories))
+        self.description_edit = QTextEdit(entry.description)
+        self.description_edit.setMaximumHeight(96)
         self.data_type_combo = QComboBox()
         for label, value in DATA_TYPE_CHOICES:
             self.data_type_combo.addItem(label, value)
@@ -59,6 +77,10 @@ class ReferenceMetadataDialog(QDialog):
 
         form.addRow("Name", self.name_edit)
         form.addRow("Formula", self.formula_edit)
+        form.addRow("CAS number", self.cas_edit)
+        form.addRow("Manufacturer", self.manufacturer_edit)
+        form.addRow("Categories", self.categories_edit)
+        form.addRow("Description", self.description_edit)
         form.addRow("Data type", self.data_type_combo)
         layout.addLayout(form)
 
@@ -69,19 +91,66 @@ class ReferenceMetadataDialog(QDialog):
 
     @property
     def reference_name(self) -> str:
+        if self._normalized_record is not None:
+            return self._normalized_record.name
         return self.name_edit.text().strip()
 
     @property
     def formula(self) -> str:
+        if self._normalized_record is not None:
+            return self._normalized_record.formula
         return self.formula_edit.text().strip()
 
     @property
+    def description(self) -> str:
+        if self._normalized_record is not None:
+            return self._normalized_record.description
+        return self.description_edit.toPlainText().strip()
+
+    @property
+    def cas_number(self) -> str:
+        if self._normalized_record is not None:
+            return self._normalized_record.cas_number
+        return self.cas_edit.text().strip()
+
+    @property
+    def manufacturer(self) -> str:
+        if self._normalized_record is not None:
+            return self._normalized_record.manufacturer
+        return self.manufacturer_edit.text().strip()
+
+    @property
+    def categories(self) -> tuple[str, ...]:
+        if self._normalized_record is not None:
+            return self._normalized_record.categories
+        return tuple(
+            part.strip()
+            for part in self.categories_edit.text().replace(";", ",").split(",")
+            if part.strip()
+        )
+
+    @property
     def data_type(self) -> str:
+        if self._normalized_record is not None:
+            return self._normalized_record.data_type
         return normalize_data_type(self.data_type_combo.currentData())
 
     def accept(self) -> None:
-        if not self.reference_name:
-            QMessageBox.warning(self, "Invalid name", "Reference name cannot be empty.")
+        try:
+            self._normalized_record = coerce_reference_record(
+                ReferenceLibraryRecord(
+                    name=self.name_edit.text(),
+                    formula=self.formula_edit.text(),
+                    description=self.description_edit.toPlainText(),
+                    cas_number=self.cas_edit.text(),
+                    manufacturer=self.manufacturer_edit.text(),
+                    categories=self.categories,
+                    data_type=self.data_type_combo.currentData(),
+                    schema_version=1,
+                )
+            )
+        except ReferenceLibraryFormatError as exc:
+            QMessageBox.warning(self, "Invalid metadata", str(exc))
             return
         super().accept()
 
@@ -107,9 +176,9 @@ class ReferenceImportPreviewDialog(QDialog):
         )
 
         self.table = QTableWidget()
-        self.table.setColumnCount(5)
+        self.table.setColumnCount(7)
         self.table.setHorizontalHeaderLabels(
-            ["Name", "Data type", "Points", "Peaks", "Import status"]
+            ["Name", "CAS", "Categories", "Data type", "Points", "Peaks", "Import status"]
         )
         self.table.setAlternatingRowColors(True)
         self.table.setEditTriggers(QAbstractItemView.NoEditTriggers)
@@ -119,6 +188,8 @@ class ReferenceImportPreviewDialog(QDialog):
         for row, preview_row in enumerate(preview.rows):
             values = [
                 preview_row.name,
+                preview_row.cas_number,
+                ", ".join(preview_row.categories),
                 preview_row.data_type,
                 str(preview_row.spectrum_points),
                 str(preview_row.peak_count),
@@ -169,7 +240,7 @@ class ReferenceLibraryDialog(QDialog):
 
         filters = QHBoxLayout()
         self.search_edit = QLineEdit()
-        self.search_edit.setPlaceholderText("Search by name or formula")
+        self.search_edit.setPlaceholderText("Search reference metadata")
         self.search_edit.textChanged.connect(self._apply_filters)
 
         self.data_type_filter = QComboBox()
@@ -178,14 +249,29 @@ class ReferenceLibraryDialog(QDialog):
             self.data_type_filter.addItem(label, value)
         self.data_type_filter.currentIndexChanged.connect(self._apply_filters)
 
+        self.category_filter = QComboBox()
+        self.category_filter.addItem("All categories", None)
+        self.category_filter.currentIndexChanged.connect(self._apply_filters)
+
         filters.addWidget(self.search_edit, stretch=1)
         filters.addWidget(self.data_type_filter)
+        filters.addWidget(self.category_filter)
         layout.addLayout(filters)
 
         self.table = QTableWidget()
-        self.table.setColumnCount(6)
+        self.table.setColumnCount(9)
         self.table.setHorizontalHeaderLabels(
-            ["Name", "Formula", "Data type", "Schema", "Points", "Peaks"]
+            [
+                "Name",
+                "Formula",
+                "CAS",
+                "Categories",
+                "Manufacturer",
+                "Data type",
+                "Schema",
+                "Points",
+                "Peaks",
+            ]
         )
         self.table.setAlternatingRowColors(True)
         self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
@@ -225,17 +311,24 @@ class ReferenceLibraryDialog(QDialog):
 
     def refresh(self) -> None:
         self.entries = self.identifier.list_references()
+        self._refresh_category_filter()
         self._apply_filters()
 
     def _apply_filters(self) -> None:
-        search_text = self.search_edit.text().strip().lower()
+        search_text = self.search_edit.text().strip().casefold()
         selected_type = self.data_type_filter.currentData()
         normalized_type = normalize_data_type(selected_type) if selected_type else None
+        selected_category = self.category_filter.currentData()
 
         self.visible_entries = [
             entry
             for entry in self.entries
-            if self._entry_matches(entry, search_text, normalized_type)
+            if self._entry_matches(
+                entry,
+                search_text,
+                normalized_type,
+                selected_category,
+            )
         ]
 
         self.table.setRowCount(len(self.visible_entries))
@@ -243,6 +336,9 @@ class ReferenceLibraryDialog(QDialog):
             values = [
                 entry.name,
                 entry.formula,
+                entry.cas_number,
+                ", ".join(entry.categories),
+                entry.manufacturer,
                 entry.data_type,
                 str(entry.schema_version),
                 str(entry.spectrum_points),
@@ -251,8 +347,11 @@ class ReferenceLibraryDialog(QDialog):
             for column, value in enumerate(values):
                 item = QTableWidgetItem(value)
                 item.setFlags(item.flags() & ~Qt.ItemIsEditable)
+                item.setToolTip(value)
                 if column == 0:
                     item.setData(Qt.UserRole, entry.reference_id)
+                    if entry.description:
+                        item.setToolTip(f"{entry.name}\n\n{entry.description}")
                 self.table.setItem(row, column, item)
         self.summary_label.setText(self._summary_text())
         self._update_button_state()
@@ -276,6 +375,10 @@ class ReferenceLibraryDialog(QDialog):
             dialog.reference_name,
             dialog.formula,
             dialog.data_type,
+            description=dialog.description,
+            cas_number=dialog.cas_number,
+            manufacturer=dialog.manufacturer,
+            categories=dialog.categories,
         ):
             QMessageBox.warning(
                 self,
@@ -410,13 +513,45 @@ class ReferenceLibraryDialog(QDialog):
         entry: ReferenceLibraryEntry,
         search_text: str,
         data_type: str | None,
+        category: str | None,
     ) -> bool:
         if data_type and normalize_data_type(entry.data_type) != data_type:
             return False
+        if category and category.casefold() not in {
+            item.casefold() for item in entry.categories
+        }:
+            return False
         if not search_text:
             return True
-        haystack = f"{entry.name} {entry.formula}".lower()
-        return search_text in haystack
+        haystack = " ".join(
+            (
+                entry.name,
+                entry.formula,
+                entry.cas_number,
+                entry.manufacturer,
+                entry.description,
+                *entry.categories,
+            )
+        ).casefold()
+        return search_text.casefold() in haystack
+
+    def _refresh_category_filter(self) -> None:
+        selected_category = self.category_filter.currentData()
+        categories_by_key: dict[str, str] = {}
+        for entry in self.entries:
+            for category in entry.categories:
+                categories_by_key.setdefault(category.casefold(), category)
+        categories = sorted(categories_by_key.values(), key=str.casefold)
+        self.category_filter.blockSignals(True)
+        try:
+            self.category_filter.clear()
+            self.category_filter.addItem("All categories", None)
+            for category in categories:
+                self.category_filter.addItem(category, category)
+            selected_index = self.category_filter.findData(selected_category)
+            self.category_filter.setCurrentIndex(max(0, selected_index))
+        finally:
+            self.category_filter.blockSignals(False)
 
     def _summary_text(self) -> str:
         total = len(self.entries)
