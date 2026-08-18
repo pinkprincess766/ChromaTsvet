@@ -1,12 +1,13 @@
 from __future__ import annotations
 
-import logging
 from types import SimpleNamespace
+from unittest.mock import Mock
 
 import numpy as np
 import pytest
 from PyQt5.QtWidgets import QLabel, QTabWidget, QTableWidget
 
+import python_analyzer.core.identification as identification_module
 import python_analyzer.gui.identification_details as identification_details
 from python_analyzer.analysis.identification_evidence import (
     EVIDENCE_INSUFFICIENT,
@@ -137,9 +138,11 @@ def test_peak_candidates_are_ranked_deterministically_with_full_diagnostics():
     assert results[0].unmatched_reference == []
 
 
-def test_malformed_legacy_reference_is_skipped_without_echoing_its_name(caplog):
+def test_malformed_legacy_reference_is_skipped_without_echoing_its_name(monkeypatch):
     identifier = SpectrumIdentifier(":memory:")
     unsafe_name = "/Users/scientist/private/reference\nforged"
+    warning = Mock()
+    monkeypatch.setattr(identification_module.logger, "warning", warning)
     try:
         identifier.add_reference("Safe", [1.0, 2.0], "S")
         identifier.conn.execute(
@@ -148,15 +151,12 @@ def test_malformed_legacy_reference_is_skipped_without_echoing_its_name(caplog):
         )
         identifier.conn.commit()
 
-        with caplog.at_level(logging.WARNING, logger="chromatsvet.identification"):
-            results = identifier.find_matches(np.asarray([1.0, 2.0]))
+        results = identifier.find_matches(np.asarray([1.0, 2.0]))
     finally:
         identifier.close()
 
     assert results == []
-    assert "Skipping malformed legacy reference record" in caplog.text
-    assert "scientist" not in caplog.text
-    assert "forged" not in caplog.text
+    warning.assert_called_once_with("Skipping malformed legacy reference record")
 
 
 def test_overview_and_dialog_expose_peak_evidence_without_claiming_identity(qapp):
