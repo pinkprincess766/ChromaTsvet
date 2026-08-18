@@ -20,7 +20,16 @@ from python_analyzer.analysis.method_presets import (
     analysis_settings_from_dict,
     analysis_settings_to_dict,
 )
-from python_analyzer.analysis.models import AnalysisSettings
+from python_analyzer.analysis.models import (
+    AnalysisSettings,
+    PeakBasedMatchResult,
+    PeakMatch,
+    ReferencePeak,
+)
+from python_analyzer.analysis.identification_evidence import (
+    EVIDENCE_LEGACY,
+    summarize_match_evidence,
+)
 from python_analyzer.analysis.peak_review import (
     PEAK_REVIEW_STATUSES,
     PeakReview,
@@ -35,11 +44,15 @@ SESSION_SUFFIX = ".chromatsvet-session.json"
 MAX_SESSION_POINTS = 2_000_000
 MAX_SESSION_PEAKS = 100_000
 MAX_SESSION_MATCHES = 1_000
+MAX_SESSION_MATCH_DETAIL_PEAKS = 10_000
+MAX_SESSION_TOTAL_MATCH_DETAIL_PEAKS = 100_000
+MAX_SESSION_FILE_BYTES = 128 * 1024 * 1024
 MAX_TEXT_LENGTH = 500
 
 _ABSOLUTE_PATH_PATTERN = re.compile(
     r"(?P<prefix>[A-Za-z]:)?[/\\](?:[^/\\\s]+[/\\])*(?P<name>[^/\\\s]+)"
 )
+_CONTROL_CHARACTER_PATTERN = re.compile(r"[\x00-\x1f\x7f]")
 
 
 class SessionFormatError(ValueError):
@@ -87,6 +100,11 @@ def build_analysis_session_payload(
         raise SessionFormatError("peak review count must match peak count")
     if not clean_reviews:
         clean_reviews = [_review_to_dict(review) for review in review_peaks(peaks, settings)]
+    clean_matches = [
+        _match_to_dict(match)
+        for match in _bounded_sequence(matches, MAX_SESSION_MATCHES, "matches")
+    ]
+    _validate_match_detail_budget(clean_matches)
 
     return {
         "schema_version": SESSION_SCHEMA_VERSION,
@@ -121,10 +139,7 @@ def build_analysis_session_payload(
             ),
             "peaks": clean_peaks,
             "peak_reviews": clean_reviews,
-            "matches": [
-                _match_to_dict(match)
-                for match in _bounded_sequence(matches, MAX_SESSION_MATCHES, "matches")
-            ],
+            "matches": clean_matches,
         },
     }
 
@@ -168,8 +183,15 @@ def write_analysis_session(path: str | Path, payload: Mapping[str, Any]) -> None
 def read_analysis_session(path: str | Path) -> dict[str, Any]:
     """Read and validate a ChromaTsvet analysis session."""
 
+    input_path = Path(path)
     try:
-        payload = json.loads(Path(path).read_text(encoding="utf-8"))
+        with input_path.open("rb") as input_file:
+            raw_payload = input_file.read(MAX_SESSION_FILE_BYTES + 1)
+        if len(raw_payload) > MAX_SESSION_FILE_BYTES:
+            raise SessionFormatError("session file is too large")
+        payload = json.loads(raw_payload.decode("utf-8"))
+    except OSError as exc:
+        raise SessionFormatError("session file could not be read") from exc
     except json.JSONDecodeError as exc:
         raise SessionFormatError("session file is not valid JSON") from exc
     except UnicodeError as exc:
@@ -215,13 +237,15 @@ def normalize_analysis_session_payload(payload: Any) -> dict[str, Any]:
     if len(reviews) != len(peaks):
         raise SessionFormatError("peak review count must match peak count")
 
+    match_payloads = _bounded_sequence(
+        result.get("matches", []),
+        MAX_SESSION_MATCHES,
+        "matches",
+    )
+    _validate_match_detail_budget(match_payloads)
     matches = [
         _match_from_dict(item)
-        for item in _bounded_sequence(
-            result.get("matches", []),
-            MAX_SESSION_MATCHES,
-            "matches",
-        )
+        for item in match_payloads
     ]
 
     return {
@@ -344,25 +368,225 @@ def _review_from_dict(payload: Any) -> PeakReview:
 
 
 def _match_to_dict(match: Any) -> dict[str, Any]:
-    return {
+    method = _safe_text(getattr(match, "method", "legacy_cosine"), 32)
+    payload = {
         "substance_name": _safe_text(getattr(match, "substance_name", "")),
         "formula": _safe_text(getattr(match, "formula", "")),
-        "score": _finite_or_none(getattr(match, "score", 0.0)) or 0.0,
+        "score": _bounded_fraction(getattr(match, "score", 0.0)),
         "compared_points": _bounded_int(
             getattr(match, "compared_points", getattr(match, "matched_points", 0)),
             0,
             MAX_SESSION_PEAKS,
         ),
+        "method": method,
+        "evidence_level": _safe_text(
+            getattr(match, "evidence_level", EVIDENCE_LEGACY),
+            32,
+        ),
     }
+    if method != "peak":
+        return payload
+
+    payload.update(
+        {
+            "unknown_peak_count": _bounded_int(
+                getattr(match, "unknown_peak_count", 0),
+                0,
+                MAX_SESSION_PEAKS,
+            ),
+            "reference_peak_count": _bounded_int(
+                getattr(match, "reference_peak_count", 0),
+                0,
+                MAX_SESSION_PEAKS,
+            ),
+            "matched_peaks": [
+                _peak_match_to_dict(item)
+                for item in _bounded_sequence(
+                    getattr(match, "matched_peaks", []),
+                    MAX_SESSION_MATCH_DETAIL_PEAKS,
+                    "matched_peaks",
+                )
+            ],
+            "unmatched_unknown": [
+                _reference_peak_to_dict(item)
+                for item in _bounded_sequence(
+                    getattr(match, "unmatched_unknown", []),
+                    MAX_SESSION_MATCH_DETAIL_PEAKS,
+                    "unmatched_unknown",
+                )
+            ],
+            "unmatched_reference": [
+                _reference_peak_to_dict(item)
+                for item in _bounded_sequence(
+                    getattr(match, "unmatched_reference", []),
+                    MAX_SESSION_MATCH_DETAIL_PEAKS,
+                    "unmatched_reference",
+                )
+            ],
+        }
+    )
+    return payload
 
 
-def _match_from_dict(payload: Any) -> SimpleNamespace:
+def _match_from_dict(payload: Any) -> SimpleNamespace | PeakBasedMatchResult:
     match = _mapping(payload, "match")
+    method = _safe_text(match.get("method", "legacy_cosine"), 32)
+    if method == "peak":
+        matched_peaks = [
+            _peak_match_from_dict(item)
+            for item in _bounded_sequence(
+                match.get("matched_peaks", []),
+                MAX_SESSION_MATCH_DETAIL_PEAKS,
+                "matched_peaks",
+            )
+        ]
+        unmatched_unknown = [
+            _reference_peak_from_dict(item)
+            for item in _bounded_sequence(
+                match.get("unmatched_unknown", []),
+                MAX_SESSION_MATCH_DETAIL_PEAKS,
+                "unmatched_unknown",
+            )
+        ]
+        unmatched_reference = [
+            _reference_peak_from_dict(item)
+            for item in _bounded_sequence(
+                match.get("unmatched_reference", []),
+                MAX_SESSION_MATCH_DETAIL_PEAKS,
+                "unmatched_reference",
+            )
+        ]
+        minimum_unknown_count = len(matched_peaks) + len(unmatched_unknown)
+        minimum_reference_count = len(matched_peaks) + len(unmatched_reference)
+        unknown_peak_count = max(
+            minimum_unknown_count,
+            _bounded_int(
+                match.get("unknown_peak_count", minimum_unknown_count),
+                minimum_unknown_count,
+                MAX_SESSION_PEAKS,
+            ),
+        )
+        reference_peak_count = max(
+            minimum_reference_count,
+            _bounded_int(
+                match.get("reference_peak_count", minimum_reference_count),
+                minimum_reference_count,
+                MAX_SESSION_PEAKS,
+            ),
+        )
+        score = _bounded_fraction(match.get("score"))
+        evidence = summarize_match_evidence(
+            score=score,
+            matches=matched_peaks,
+            unknown_peak_count=unknown_peak_count,
+            reference_peak_count=reference_peak_count,
+        )
+        return PeakBasedMatchResult(
+            substance_name=_safe_text(match.get("substance_name", "")),
+            formula=_safe_text(match.get("formula", "")),
+            score=score,
+            matched_peaks=matched_peaks,
+            unmatched_unknown=unmatched_unknown,
+            unmatched_reference=unmatched_reference,
+            num_matched=len(matched_peaks),
+            unknown_peak_count=unknown_peak_count,
+            reference_peak_count=reference_peak_count,
+            sample_coverage=evidence.sample_coverage,
+            reference_coverage=evidence.reference_coverage,
+            mean_frequency_error=evidence.mean_frequency_error,
+            max_frequency_error=evidence.max_frequency_error,
+            evidence_level=evidence.evidence_level,
+        )
+
     return SimpleNamespace(
         substance_name=_safe_text(match.get("substance_name", "")),
         formula=_safe_text(match.get("formula", "")),
-        score=_finite_or_none(match.get("score")) or 0.0,
+        score=_bounded_fraction(match.get("score")),
         compared_points=_bounded_int(match.get("compared_points", 0), 0, MAX_SESSION_PEAKS),
+        method="legacy_cosine",
+        evidence_level=EVIDENCE_LEGACY,
+    )
+
+
+def _peak_match_to_dict(match: Any) -> dict[str, Any]:
+    return {
+        "unknown_frequency": _required_finite(
+            getattr(match, "unknown_frequency", None), "matched peak"
+        ),
+        "reference_frequency": _required_finite(
+            getattr(match, "reference_frequency", None), "matched peak"
+        ),
+        "frequency_diff": _required_finite(
+            getattr(match, "frequency_diff", None), "matched peak"
+        ),
+        "intensity_ratio": _required_finite(
+            getattr(match, "intensity_ratio", None), "matched peak"
+        ),
+        "score": _required_finite(getattr(match, "score", None), "matched peak"),
+        "unknown_index": _bounded_int(
+            getattr(match, "unknown_index", 0), 0, MAX_SESSION_PEAKS
+        ),
+        "reference_index": _bounded_int(
+            getattr(match, "reference_index", 0), 0, MAX_SESSION_PEAKS
+        ),
+    }
+
+
+def _peak_match_from_dict(payload: Any) -> PeakMatch:
+    match = _mapping(payload, "matched_peak")
+    required_values = {
+        field_name: _finite_or_none(match.get(field_name))
+        for field_name in (
+            "unknown_frequency",
+            "reference_frequency",
+            "frequency_diff",
+            "intensity_ratio",
+            "score",
+        )
+    }
+    if any(value is None for value in required_values.values()):
+        raise SessionFormatError("matched peak contains a non-finite value")
+    return PeakMatch(
+        unknown_frequency=required_values["unknown_frequency"],
+        reference_frequency=required_values["reference_frequency"],
+        frequency_diff=abs(required_values["frequency_diff"]),
+        intensity_ratio=max(0.0, required_values["intensity_ratio"]),
+        score=max(0.0, min(1.0, required_values["score"])),
+        unknown_index=_bounded_int(match.get("unknown_index", 0), 0, MAX_SESSION_PEAKS),
+        reference_index=_bounded_int(
+            match.get("reference_index", 0), 0, MAX_SESSION_PEAKS
+        ),
+    )
+
+
+def _reference_peak_to_dict(peak: Any) -> dict[str, Any]:
+    return {
+        "frequency": _required_finite(
+            getattr(peak, "frequency", None), "reference peak"
+        ),
+        "intensity": _required_finite(
+            getattr(peak, "intensity", None), "reference peak"
+        ),
+        "width": _finite_or_none(getattr(peak, "width", 0.0)) or 0.0,
+        "width_hz": _finite_or_none(getattr(peak, "width_hz", 0.0)) or 0.0,
+        "area": _finite_or_none(getattr(peak, "area", 0.0)) or 0.0,
+        "snr": _finite_or_none(getattr(peak, "snr", 0.0)) or 0.0,
+    }
+
+
+def _reference_peak_from_dict(payload: Any) -> ReferencePeak:
+    peak = _mapping(payload, "reference_peak")
+    frequency = _finite_or_none(peak.get("frequency"))
+    intensity = _finite_or_none(peak.get("intensity"))
+    if frequency is None or intensity is None:
+        raise SessionFormatError("reference peak contains a non-finite value")
+    return ReferencePeak(
+        frequency=frequency,
+        intensity=max(0.0, intensity),
+        width=max(0.0, _finite_or_none(peak.get("width")) or 0.0),
+        width_hz=max(0.0, _finite_or_none(peak.get("width_hz")) or 0.0),
+        area=max(0.0, _finite_or_none(peak.get("area")) or 0.0),
+        snr=max(0.0, _finite_or_none(peak.get("snr")) or 0.0),
     )
 
 
@@ -375,6 +599,28 @@ def _finite_float_list(values: Any, field_name: str) -> list[float]:
             raise SessionFormatError(f"{field_name} contains a non-finite value")
         result.append(numeric_value)
     return result
+
+
+def _validate_match_detail_budget(matches: Sequence[Any]) -> None:
+    detail_count = 0
+    for payload in matches:
+        match = _mapping(payload, "match")
+        if _safe_text(match.get("method", "legacy_cosine"), 32) != "peak":
+            continue
+        for field_name in (
+            "matched_peaks",
+            "unmatched_unknown",
+            "unmatched_reference",
+        ):
+            detail_count += len(
+                _bounded_sequence(
+                    match.get(field_name, []),
+                    MAX_SESSION_MATCH_DETAIL_PEAKS,
+                    field_name,
+                )
+            )
+            if detail_count > MAX_SESSION_TOTAL_MATCH_DETAIL_PEAKS:
+                raise SessionFormatError("match diagnostics are too large")
 
 
 def _bounded_sequence(values: Any, maximum: int, field_name: str) -> Sequence[Any]:
@@ -405,6 +651,20 @@ def _finite_or_none(value: Any) -> float | None:
     return numeric_value
 
 
+def _required_finite(value: Any, field_name: str) -> float:
+    numeric_value = _finite_or_none(value)
+    if numeric_value is None:
+        raise SessionFormatError(f"{field_name} contains a non-finite value")
+    return numeric_value
+
+
+def _bounded_fraction(value: Any) -> float:
+    numeric_value = _finite_or_none(value)
+    if numeric_value is None:
+        return 0.0
+    return max(0.0, min(1.0, numeric_value))
+
+
 def _bounded_int(value: Any, default: int, maximum: int) -> int:
     try:
         numeric_value = int(value)
@@ -421,7 +681,8 @@ def _safe_file_name(value: Any) -> str:
 def _safe_text(value: Any, max_length: int = MAX_TEXT_LENGTH) -> str:
     text = str("" if value is None else value).strip()
     text = _ABSOLUTE_PATH_PATTERN.sub(lambda match: f".../{match.group('name')}", text)
-    return text[:max_length]
+    text = _CONTROL_CHARACTER_PATTERN.sub(" ", text)
+    return " ".join(text.split())[:max_length]
 
 
 def _safe_text_list(values: Any) -> list[str]:

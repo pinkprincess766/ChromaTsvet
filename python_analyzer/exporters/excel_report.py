@@ -81,17 +81,34 @@ class ExcelReportExporter:
         self._style_header(sheet, 7)
 
     def _write_matches_sheet(self, sheet: Worksheet, matches: Any) -> None:
-        sheet.append(["substance", "formula", "score", "compared_points"])
+        sheet.append(
+            [
+                "candidate",
+                "formula",
+                "method",
+                "score",
+                "matched_peaks",
+                "sample_coverage",
+                "reference_coverage",
+                "mean_frequency_error",
+                "evidence",
+            ]
+        )
         for match in matches:
             sheet.append(
                 [
                     self._cell_value(match.substance_name),
                     self._cell_value(match.formula),
+                    self._cell_value(match.method),
                     self._cell_value(match.score),
                     self._cell_value(match.compared_points),
+                    self._cell_value(match.sample_coverage),
+                    self._cell_value(match.reference_coverage),
+                    self._cell_value(match.mean_frequency_error),
+                    self._cell_value(match.evidence_level),
                 ]
             )
-        self._style_header(sheet, 4)
+        self._style_header(sheet, 9)
 
     def _style_header(self, sheet: Worksheet, column_count: int) -> None:
         for cell in sheet[1][:column_count]:

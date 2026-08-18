@@ -67,3 +67,17 @@ class PeakBasedMatchResult:
     unmatched_unknown: list[ReferencePeak]
     unmatched_reference: list[ReferencePeak]
     num_matched: int
+    unknown_peak_count: int = 0
+    reference_peak_count: int = 0
+    sample_coverage: float = 0.0
+    reference_coverage: float = 0.0
+    mean_frequency_error: float | None = None
+    max_frequency_error: float | None = None
+    evidence_level: str = "insufficient"
+    method: str = "peak"
+
+    @property
+    def compared_points(self) -> int:
+        """Compatibility alias used by older reports and session files."""
+
+        return self.num_matched

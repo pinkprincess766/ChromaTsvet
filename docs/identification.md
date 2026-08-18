@@ -40,6 +40,31 @@ The current matcher:
 5. Penalizes unmatched peaks in the final score.
 6. Returns transparent diagnostics: matched peaks, unmatched sample peaks,
    unmatched reference peaks, and the final score components.
+7. Ranks all compatible references deterministically by score, reference
+   coverage, mean frequency error, and candidate name.
+
+The GUI keeps those diagnostics intact. The result table reports matched peak
+count, coverage of both the sample and reference, mean absolute frequency
+error, and a conservative evidence band. Double-clicking a candidate opens the
+matched and unmatched peak lists used to reach that result.
+
+Evidence bands are deliberately cautious:
+
+- one matched peak can be at most `weak` evidence;
+- `moderate` requires at least two matches and 40% coverage on both sides;
+- `strong` requires at least three matches, a score of at least 0.85, and 60%
+  coverage on both sides;
+- non-finite or incomplete diagnostics become `insufficient`.
+
+These labels describe computational candidate evidence. They are not a
+validated chemical identification and should be reviewed alongside the raw
+spectrum, analysis method, and reference provenance.
+
+The current band thresholds are explicit conservative UI heuristics, not
+empirically calibrated decision limits. They must not be used as acceptance
+criteria for laboratory work until validated against representative reference
+and unknown datasets. Evidence summarization adds one `O(M)` pass over the
+selected peak pairs and uses constant auxiliary space.
 
 Candidate generation sorts both peak lists and scans a frequency window:
 
@@ -72,8 +97,8 @@ file paths, or recent-file state.
 
 ## Next Steps
 
-1. Add GUI diagnostics for matched and unmatched peaks.
-2. Store full analysis settings alongside reference peaks.
+1. Store full analysis settings alongside reference peaks.
+2. Add reference provenance and acquisition metadata to candidate details.
 3. Consider replacing greedy selection with an optimal assignment algorithm if
    dense or ambiguous peak sets become common.
 4. Rebuild the default reference library with real peak features.

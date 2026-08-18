@@ -169,7 +169,11 @@ class HTMLReportExporter:
       <h2>Identification Results</h2>
       <table>
         <thead>
-          <tr><th>Substance</th><th>Formula</th><th>Score</th><th>Compared points</th></tr>
+          <tr>
+            <th>Candidate</th><th>Formula</th><th>Method</th><th>Score</th>
+            <th>Matched</th><th>Sample coverage</th><th>Reference coverage</th>
+            <th>Mean frequency error</th><th>Evidence</th>
+          </tr>
         </thead>
         <tbody>{match_rows}</tbody>
       </table>
@@ -212,14 +216,19 @@ class HTMLReportExporter:
 
     def _render_match_rows(self, matches: Any) -> str:
         if not matches:
-            return '<tr><td colspan="4" class="muted">No matches found.</td></tr>'
+            return '<tr><td colspan="9" class="muted">No matches found.</td></tr>'
 
         return "".join(
             "<tr>"
             f"<td>{escape(str(match.substance_name))}</td>"
             f"<td>{escape(str(match.formula))}</td>"
+            f"<td>{escape(str(match.method))}</td>"
             f"<td>{escape(str(match.score))}</td>"
             f"<td>{escape(str(match.compared_points))}</td>"
+            f"<td>{escape(str(match.sample_coverage))}</td>"
+            f"<td>{escape(str(match.reference_coverage))}</td>"
+            f"<td>{escape(str(match.mean_frequency_error))}</td>"
+            f"<td>{escape(str(match.evidence_level))}</td>"
             "</tr>"
             for match in matches
         )

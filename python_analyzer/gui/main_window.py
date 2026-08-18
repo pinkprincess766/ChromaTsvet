@@ -31,7 +31,6 @@ from paths import ensure_rust_in_path, get_library_db_path, get_project_root
 
 # Local imports
 from python_analyzer.core.identification import (
-    MatchResult,
     SpectrumIdentifier,
     normalize_data_type,
     peak_to_reference_peak,
@@ -100,6 +99,10 @@ from python_analyzer.gui.log_view import (
     log_level_from_entry,
 )
 from python_analyzer.gui.peak_editor import PeakEditDialog
+from python_analyzer.gui.identification_details import (
+    IdentificationDetailsDialog,
+    identification_overview_values,
+)
 from python_analyzer.gui.recent_files import (
     clear_recent_files as clear_recent_file_history,
     forget_recent_file,
@@ -440,16 +443,49 @@ class MainWindow(QMainWindow):
         peak_layout.addWidget(self.peak_table)
         self.results_tabs.addTab(peak_tab, "Detected Peaks")
 
+        identification_tab = QWidget()
+        identification_layout = QVBoxLayout(identification_tab)
+        identification_layout.setContentsMargins(0, 0, 0, 0)
+        identification_layout.setSpacing(6)
+        identification_controls = QHBoxLayout()
+        self.btn_identification_details = QPushButton("View Details")
+        self.btn_identification_details.setToolTip(
+            "Inspect matched and unmatched peaks for the selected candidate"
+        )
+        self.btn_identification_details.setEnabled(False)
+        self.btn_identification_details.clicked.connect(
+            self.show_selected_identification_details
+        )
+        identification_controls.addWidget(self.btn_identification_details)
+        identification_controls.addStretch()
+        identification_layout.addLayout(identification_controls)
+
         self.table = QTableWidget()
-        self.table.setColumnCount(4)
+        self.table.setColumnCount(8)
         self.table.setHorizontalHeaderLabels(
-            ["Substance", "Formula", "Score", "Compared points"]
+            [
+                "Candidate",
+                "Formula",
+                "Score",
+                "Matched",
+                "Sample coverage",
+                "Reference coverage",
+                "Mean |error|",
+                "Evidence",
+            ]
         )
         self.table.setAlternatingRowColors(True)
         self.table.verticalHeader().setVisible(False)
         self.table.horizontalHeader().setStretchLastSection(True)
         self.table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
-        self.results_tabs.addTab(self.table, "Identification Results")
+        self.table.itemSelectionChanged.connect(
+            self._update_identification_details_action
+        )
+        self.table.cellDoubleClicked.connect(
+            lambda row, _column: self.show_identification_details(row)
+        )
+        identification_layout.addWidget(self.table)
+        self.results_tabs.addTab(identification_tab, "Identification Results")
         self._update_result_tab_titles(0, 0)
         main_layout.addWidget(self.results_tabs)
 
@@ -1467,19 +1503,25 @@ class MainWindow(QMainWindow):
         self.current_matches = list(matches)
         self.table.setRowCount(len(matches))
         for row, match in enumerate(self.current_matches):
-            compared_points = getattr(
-                match,
-                "compared_points",
-                getattr(match, "matched_points", 0),
-            )
-            values = [
-                match.substance_name,
-                match.formula,
-                f"{match.score:.3f}",
-                compared_points,
-            ]
+            values = identification_overview_values(match)
             for column, value in enumerate(values):
                 self.table.setItem(row, column, self._readonly_table_item(value))
+        self._update_identification_details_action()
+
+    def _update_identification_details_action(self):
+        row = self.table.currentRow()
+        self.btn_identification_details.setEnabled(
+            0 <= row < len(self.current_matches)
+        )
+
+    def show_selected_identification_details(self):
+        self.show_identification_details(self.table.currentRow())
+
+    def show_identification_details(self, row):
+        if not 0 <= row < len(self.current_matches):
+            return
+        dialog = IdentificationDetailsDialog(self, self.current_matches[row])
+        dialog.exec()
 
     def _identify_matches(self, peaks, spectrum):
         """Identify current spectrum, preferring reviewed peak features."""
@@ -1495,19 +1537,11 @@ class MainWindow(QMainWindow):
                 frequency_tolerance=tol,
                 data_type=dtype,
             )
-            return [
-                MatchResult(
-                    substance_name=m.substance_name,
-                    formula=m.formula,
-                    score=m.score,
-                    compared_points=m.num_matched,
-                )
-                for m in peak_matches
-            ][:10]
+            return peak_matches[:10]
         except Exception as exc:
             self.log(
                 "Peak-based identification failed; falling back to legacy matching "
-                f"({type(exc).__name__}: {exc})",
+                f"({type(exc).__name__})",
                 level="warning",
             )
             return self.identifier.find_matches(spectrum)
