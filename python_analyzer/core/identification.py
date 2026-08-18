@@ -2,10 +2,15 @@
 
 import logging
 import json
+import math
 import numpy as np
 from typing import List
 from dataclasses import dataclass
 from python_analyzer.analysis.models import ReferencePeak, PeakBasedMatchResult
+from python_analyzer.analysis.identification_evidence import (
+    EVIDENCE_LEGACY,
+    summarize_match_evidence,
+)
 from python_analyzer.core.peak_matching import (
     DATA_TYPE_CHOICES,
     DEFAULT_DATA_TYPE,
@@ -29,6 +34,7 @@ from python_analyzer.core.reference_repository import (
 
 
 logger = logging.getLogger("chromatsvet.identification")
+MAX_LEGACY_SPECTRUM_POINTS = 2_000_000
 
 @dataclass(init=False)
 class MatchResult:
@@ -36,6 +42,8 @@ class MatchResult:
     formula: str = ""
     score: float = 0.0
     compared_points: int = 0
+    method: str = "legacy_cosine"
+    evidence_level: str = EVIDENCE_LEGACY
 
     def __init__(
         self,
@@ -45,6 +53,8 @@ class MatchResult:
         compared_points: int = 0,
         *,
         matched_points: int | None = None,
+        method: str = "legacy_cosine",
+        evidence_level: str = EVIDENCE_LEGACY,
     ):
         if matched_points is not None:
             compared_points = matched_points
@@ -52,6 +62,8 @@ class MatchResult:
         self.formula = formula
         self.score = score
         self.compared_points = compared_points
+        self.method = method
+        self.evidence_level = evidence_level
 
     @property
     def matched_points(self) -> int:
@@ -157,16 +169,31 @@ class SpectrumIdentifier:
 
     def find_matches(self, unknown_spectrum: np.ndarray) -> List[MatchResult]:
         """Legacy cosine similarity on raw spectrum (for backward compatibility)."""
-        if len(unknown_spectrum) == 0:
+        unknown_values = _finite_spectrum(unknown_spectrum)
+        if unknown_values.size == 0:
             return []
 
-        unk_norm = self._normalize(unknown_spectrum)
+        unk_norm = self._normalize(unknown_values)
         results = []
 
         for name, formula, spectrum_json in self.repository.legacy_reference_rows():
             if not spectrum_json:
                 continue  # peak-only reference
-            ref_int = np.array(json.loads(spectrum_json))
+            try:
+                decoded_spectrum = json.loads(spectrum_json)
+                if not isinstance(decoded_spectrum, list):
+                    raise ValueError("legacy spectrum must be a list")
+                if len(decoded_spectrum) > MAX_LEGACY_SPECTRUM_POINTS:
+                    raise ValueError("legacy spectrum is too large")
+                if not decoded_spectrum:
+                    continue
+                ref_int = _finite_spectrum(decoded_spectrum)
+            except (TypeError, ValueError, json.JSONDecodeError):
+                logger.warning("Skipping malformed legacy reference record")
+                continue
+            if ref_int.size == 0:
+                logger.warning("Skipping malformed legacy reference record")
+                continue
             ref_norm = self._normalize(ref_int[:len(unk_norm)])
 
             min_len = min(len(unk_norm), len(ref_norm))
@@ -176,6 +203,8 @@ class SpectrumIdentifier:
             score = np.dot(unk_norm[:min_len], ref_norm[:min_len]) / (
                 np.linalg.norm(unk_norm[:min_len]) * np.linalg.norm(ref_norm[:min_len]) + 1e-10
             )
+            if not math.isfinite(float(score)):
+                continue
 
             results.append(MatchResult(
                 substance_name=name,
@@ -214,7 +243,9 @@ class SpectrumIdentifier:
                     raise ValueError("peaks_json must contain a list")
                 ref_peaks = normalize_reference_peaks(ref_peak_dicts)
             except (TypeError, ValueError, json.JSONDecodeError):
-                logger.warning("Skipping malformed peak reference for %s", name)
+                # Stored labels may come from an old or externally modified DB.
+                # Keep diagnostic logs useful without echoing untrusted text.
+                logger.warning("Skipping malformed peak reference record")
                 continue
             if not ref_peaks:
                 continue
@@ -234,6 +265,12 @@ class SpectrumIdentifier:
             score = compute_peak_based_score(
                 matches, len(normalized_unknown_peaks), len(ref_peaks)
             )
+            evidence = summarize_match_evidence(
+                score=score,
+                matches=matches,
+                unknown_peak_count=len(normalized_unknown_peaks),
+                reference_peak_count=len(ref_peaks),
+            )
 
             results.append(
                 PeakBasedMatchResult(
@@ -252,10 +289,25 @@ class SpectrumIdentifier:
                         if index not in matched_reference
                     ],
                     num_matched=len(matches),
+                    unknown_peak_count=len(normalized_unknown_peaks),
+                    reference_peak_count=len(ref_peaks),
+                    sample_coverage=evidence.sample_coverage,
+                    reference_coverage=evidence.reference_coverage,
+                    mean_frequency_error=evidence.mean_frequency_error,
+                    max_frequency_error=evidence.max_frequency_error,
+                    evidence_level=evidence.evidence_level,
                 )
             )
 
-        return sorted(results, key=lambda x: x.score, reverse=True)
+        return sorted(
+            results,
+            key=lambda result: (
+                -result.score,
+                -result.reference_coverage,
+                _finite_sort_value(result.mean_frequency_error),
+                result.substance_name.casefold(),
+            ),
+        )
 
     def _normalize(self, arr: np.ndarray) -> np.ndarray:
         max_val = np.max(arr)
@@ -263,3 +315,21 @@ class SpectrumIdentifier:
 
     def log(self, msg: str):
         logger.info(msg)
+
+
+def _finite_sort_value(value: object) -> float:
+    try:
+        numeric_value = float(value)
+    except (TypeError, ValueError):
+        return math.inf
+    return numeric_value if math.isfinite(numeric_value) else math.inf
+
+
+def _finite_spectrum(values: object) -> np.ndarray:
+    try:
+        spectrum = np.asarray(values, dtype=float).reshape(-1)
+    except (TypeError, ValueError):
+        return np.asarray([], dtype=float)
+    if spectrum.size > MAX_LEGACY_SPECTRUM_POINTS:
+        return np.asarray([], dtype=float)
+    return spectrum if np.all(np.isfinite(spectrum)) else np.asarray([], dtype=float)

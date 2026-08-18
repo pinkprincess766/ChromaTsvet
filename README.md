@@ -349,12 +349,15 @@ the existing analysis foundation. The application can load data, tune analysis
 settings from the GUI, visualize and export results, preserve user settings,
 reopen recent files, save analysis sessions, review/manual-correct peaks, move
 reference libraries between machines, and produce PDF, HTML, Excel, PNG, SVG,
-and peak CSV outputs.
+and peak CSV outputs. Peak-based reference results retain matched and unmatched
+peak diagnostics, report coverage and frequency error, and expose conservative
+candidate-evidence bands for review.
 
-The next development priorities are richer peak-match diagnostics, stronger
+The next development priorities are reference acquisition metadata, stronger
 real-world tester feedback loops, cross-platform signed/notarized builds, and
 broader synthetic and real-world regression datasets. The identification model
-is outlined in [Peak-Based Identification](docs/identification.md).
+and its evidence limits are outlined in
+[Peak-Based Identification](docs/identification.md).
 
 ## Known Limitations
 

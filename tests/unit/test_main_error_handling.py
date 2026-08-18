@@ -903,7 +903,7 @@ class MainWindowErrorHandlingTest(unittest.TestCase):
         self.window.run_analysis()
 
         self.assertEqual(
-            self.window.table.horizontalHeaderItem(3).text(), "Compared points"
+            self.window.table.horizontalHeaderItem(3).text(), "Matched"
         )
         self.assertEqual(self.window.table.item(0, 3).text(), "2")
 

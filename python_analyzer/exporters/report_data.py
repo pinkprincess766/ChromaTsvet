@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 from datetime import datetime
+import math
+import re
 from typing import Any
 
 from python_analyzer.analysis.peak_review import (
@@ -13,6 +15,10 @@ from python_analyzer.analysis.peak_review import (
 from python_analyzer.analysis.processing_passport import build_processing_passport
 from python_analyzer.analysis.session_state import AnalysisSessionState
 from python_analyzer.exporters.pdf_report import PDFMatchRow, PDFReportData
+
+
+_CONTROL_CHARACTER_PATTERN = re.compile(r"[\x00-\x1f\x7f]")
+MAX_REPORT_MATCH_TEXT = 200
 
 
 def build_report_data(
@@ -113,11 +119,57 @@ def build_report_data(
 
 
 def _match_to_pdf_row(match: Any) -> PDFMatchRow:
+    method = str(getattr(match, "method", "legacy_cosine"))
+    is_peak_match = method == "peak"
     return PDFMatchRow(
-        substance_name=str(getattr(match, "substance_name", "")),
-        formula=str(getattr(match, "formula", "")),
-        score=str(getattr(match, "score", "")),
+        substance_name=_safe_report_text(getattr(match, "substance_name", "")),
+        formula=_safe_report_text(getattr(match, "formula", "")),
+        score=_format_number(getattr(match, "score", None), 3),
         compared_points=str(
             getattr(match, "compared_points", getattr(match, "matched_points", ""))
         ),
+        method="peak" if is_peak_match else "legacy cosine",
+        evidence_level=_safe_report_text(
+            getattr(match, "evidence_level", "legacy" if not is_peak_match else "insufficient")
+        ),
+        sample_coverage=(
+            _format_percent(getattr(match, "sample_coverage", None))
+            if is_peak_match
+            else "n/a"
+        ),
+        reference_coverage=(
+            _format_percent(getattr(match, "reference_coverage", None))
+            if is_peak_match
+            else "n/a"
+        ),
+        mean_frequency_error=(
+            _format_number(getattr(match, "mean_frequency_error", None), 4)
+            if is_peak_match
+            else "n/a"
+        ),
     )
+
+
+def _format_percent(value: Any) -> str:
+    numeric_value = _finite_number(value)
+    if numeric_value is None:
+        return "n/a"
+    return f"{max(0.0, min(1.0, numeric_value)) * 100:.1f}%"
+
+
+def _format_number(value: Any, precision: int) -> str:
+    numeric_value = _finite_number(value)
+    return "n/a" if numeric_value is None else f"{numeric_value:.{precision}f}"
+
+
+def _finite_number(value: Any) -> float | None:
+    try:
+        numeric_value = float(value)
+    except (TypeError, ValueError):
+        return None
+    return numeric_value if math.isfinite(numeric_value) else None
+
+
+def _safe_report_text(value: Any) -> str:
+    text = _CONTROL_CHARACTER_PATTERN.sub(" ", str("" if value is None else value))
+    return " ".join(text.split())[:MAX_REPORT_MATCH_TEXT]

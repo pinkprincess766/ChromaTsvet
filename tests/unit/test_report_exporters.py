@@ -14,6 +14,7 @@ from python_analyzer.exporters import (
     PDFReportData,
     write_peaks_csv,
 )
+from python_analyzer.exporters.report_data import _match_to_pdf_row
 
 
 def sample_report_data():
@@ -60,6 +61,59 @@ def sample_report_data():
 
 
 class ReportExportersTest(unittest.TestCase):
+    def test_peak_match_diagnostics_flow_into_report_rows(self):
+        row = _match_to_pdf_row(
+            SimpleNamespace(
+                substance_name="Reference",
+                formula="R",
+                method="peak",
+                score=0.9123,
+                compared_points=3,
+                sample_coverage=0.75,
+                reference_coverage=0.6,
+                mean_frequency_error=0.125,
+                evidence_level="strong",
+            )
+        )
+
+        self.assertEqual(row.method, "peak")
+        self.assertEqual(row.score, "0.912")
+        self.assertEqual(row.sample_coverage, "75.0%")
+        self.assertEqual(row.reference_coverage, "60.0%")
+        self.assertEqual(row.mean_frequency_error, "0.1250")
+        self.assertEqual(row.evidence_level, "strong")
+
+    def test_html_and_excel_reports_write_peak_match_diagnostics(self):
+        report_data = sample_report_data()
+        report_data.matches = [
+            PDFMatchRow(
+                substance_name="Reference",
+                formula="R",
+                score="0.912",
+                compared_points="3",
+                method="peak",
+                evidence_level="strong",
+                sample_coverage="75.0%",
+                reference_coverage="60.0%",
+                mean_frequency_error="0.1250",
+            )
+        ]
+
+        with TemporaryDirectory() as temp_dir:
+            html_path = Path(temp_dir) / "report.html"
+            excel_path = Path(temp_dir) / "report.xlsx"
+            HTMLReportExporter().export(html_path, report_data)
+            ExcelReportExporter().export(excel_path, report_data)
+            html = html_path.read_text(encoding="utf-8")
+            workbook = load_workbook(excel_path, data_only=True)
+
+        self.assertIn("Sample coverage", html)
+        self.assertIn("75.0%", html)
+        self.assertIn("strong", html)
+        self.assertEqual(workbook["Matches"]["C2"].value, "peak")
+        self.assertEqual(workbook["Matches"]["F2"].value, "75.0%")
+        self.assertEqual(workbook["Matches"]["I2"].value, "strong")
+
     def test_html_report_contains_escaped_report_content_and_embedded_plot(self):
         with TemporaryDirectory() as temp_dir:
             temp_path = Path(temp_dir)
@@ -121,7 +175,9 @@ class ReportExportersTest(unittest.TestCase):
         self.assertEqual(workbook["Peaks"]["A2"].value, 120.5)
         self.assertEqual(workbook["Peaks"]["G2"].value, 18.0)
         self.assertEqual(workbook["Matches"]["A2"].value, "Reference")
-        self.assertEqual(workbook["Matches"]["C2"].value, "0.900")
+        self.assertEqual(workbook["Matches"]["C2"].value, "legacy cosine")
+        self.assertEqual(workbook["Matches"]["D2"].value, "0.900")
+        self.assertEqual(workbook["Matches"]["I2"].value, "legacy")
 
     def test_excel_report_neutralizes_formula_like_text(self):
         report_data = sample_report_data()
@@ -145,8 +201,8 @@ class ReportExportersTest(unittest.TestCase):
         self.assertEqual(workbook["Summary"]["B5"].value, '\'=HYPERLINK("http://x")')
         self.assertEqual(workbook["Matches"]["A2"].value, "'=cmd")
         self.assertEqual(workbook["Matches"]["B2"].value, "'+H2O")
-        self.assertEqual(workbook["Matches"]["C2"].value, "'@score")
-        self.assertEqual(workbook["Matches"]["D2"].value, "'-1")
+        self.assertEqual(workbook["Matches"]["D2"].value, "'@score")
+        self.assertEqual(workbook["Matches"]["E2"].value, "'-1")
 
     def test_peak_csv_neutralizes_formula_like_text(self):
         peak = SimpleNamespace(

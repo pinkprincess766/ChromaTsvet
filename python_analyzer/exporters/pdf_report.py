@@ -38,6 +38,11 @@ class PDFMatchRow:
     formula: str
     score: str
     compared_points: str
+    method: str = "legacy cosine"
+    evidence_level: str = "legacy"
+    sample_coverage: str = ""
+    reference_coverage: str = ""
+    mean_frequency_error: str = ""
 
 
 @dataclass(frozen=True)
@@ -81,10 +86,14 @@ class PDFReportExporter:
         ColumnSpec("SNR", 390, "snr"),
     )
     match_columns = (
-        ColumnSpec("Substance", 0, "substance_name", 28),
-        ColumnSpec("Formula", 170, "formula", 14),
-        ColumnSpec("Score", 270, "score"),
-        ColumnSpec("Compared points", 340, "compared_points"),
+        ColumnSpec("Candidate", 0, "substance_name", 16),
+        ColumnSpec("Formula", 105, "formula", 9),
+        ColumnSpec("Score", 165, "score"),
+        ColumnSpec("Matched", 205, "compared_points"),
+        ColumnSpec("Sample", 255, "sample_coverage"),
+        ColumnSpec("Reference", 305, "reference_coverage"),
+        ColumnSpec("Mean error", 365, "mean_frequency_error"),
+        ColumnSpec("Evidence", 430, "evidence_level", 12),
     )
 
     def export(
