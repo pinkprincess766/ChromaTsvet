@@ -59,7 +59,7 @@ from python_analyzer.analysis.peak_review import (
     review_summary,
     set_peak_review_status,
 )
-from python_analyzer.analysis.runner import run_analysis as run_analysis_pipeline
+from python_analyzer.analysis.workflow import run_analysis_workflow
 from python_analyzer.analysis.session_bundle import (
     SESSION_FILE_FILTER,
     SESSION_SUFFIX,
@@ -1747,7 +1747,7 @@ class MainWindow(QMainWindow):
         self.analysis_settings = self._build_analysis_settings()
 
         try:
-            result = run_analysis_pipeline(
+            outcome = run_analysis_workflow(
                 self.current_data,
                 self.analysis_settings,
             )
@@ -1774,16 +1774,12 @@ class MainWindow(QMainWindow):
             return
 
         try:
-            spectrum = np.asarray(result.get("spectrum", []), dtype=float)
-            frequency_axis = self.spectrum_plot.frequency_axis(
-                result,
-                len(spectrum),
-                sample_rate=self.sample_rate,
-                source_signal_len=len(self.current_data),
-            )
-            peaks = result.get("peaks", [])
+            result = outcome.result
+            spectrum = outcome.spectrum
+            frequency_axis = outcome.frequency_axis
+            peaks = outcome.peaks
             self.current_peaks = peaks  # store for adding references with peak data
-            self.current_peak_reviews = review_peaks(peaks, self.analysis_settings)
+            self.current_peak_reviews = outcome.peak_reviews
             self.current_frequency_axis = frequency_axis
             self.current_spectrum_values = spectrum
 
@@ -1831,17 +1827,13 @@ class MainWindow(QMainWindow):
             return True
 
         try:
-            result = run_analysis_pipeline(
+            outcome = run_analysis_workflow(
                 self.overlay_data,
                 self.analysis_settings,
             )
-            spectrum = np.asarray(result.get("spectrum", []), dtype=float)
-            frequency_axis = self.spectrum_plot.frequency_axis(
-                result,
-                len(spectrum),
-                sample_rate=self.sample_rate,
-                source_signal_len=len(self.overlay_data),
-            )
+            result = outcome.result
+            spectrum = outcome.spectrum
+            frequency_axis = outcome.frequency_axis
             for message in processing_warning_messages(
                 result,
                 source_label="Overlay processing",
