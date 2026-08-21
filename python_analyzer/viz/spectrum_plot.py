@@ -9,6 +9,11 @@ import numpy as np
 import pyqtgraph as pg
 from PyQt5.QtGui import QFont
 
+from python_analyzer.analysis.frequency_axis import (
+    rebuild_frequency_axis,
+    resolve_frequency_axis,
+)
+
 
 class SpectrumPlot:
     """Manages the pyqtgraph plot widget for spectrum visualization."""
@@ -191,24 +196,12 @@ class SpectrumPlot:
         sample_rate=None,
         source_signal_len=None,
     ) -> np.ndarray:
-        try:
-            frequency_axis = np.asarray(result.get("frequency_axis", []), dtype=float)
-        except (TypeError, ValueError):
-            frequency_axis = np.asarray([], dtype=float)
-
-        if (
-            len(frequency_axis) != spectrum_len
-            or not np.all(np.isfinite(frequency_axis))
-        ):
-            fallback_sample_rate = result.get("sample_rate", sample_rate)
-            if fallback_sample_rate is None:
-                fallback_sample_rate = sample_rate
-            return self._fallback_frequency_axis(
-                spectrum_len,
-                fallback_sample_rate,
-                source_signal_len,
-            )
-        return frequency_axis
+        return resolve_frequency_axis(
+            result,
+            spectrum_len,
+            sample_rate=sample_rate,
+            source_signal_len=source_signal_len,
+        )
 
     def _fallback_frequency_axis(
         self,
@@ -216,27 +209,8 @@ class SpectrumPlot:
         sample_rate,
         source_signal_len,
     ) -> np.ndarray:
-        if spectrum_len == 0:
-            return np.asarray([], dtype=float)
-
-        try:
-            sample_rate = float(sample_rate)
-            source_signal_len = int(source_signal_len)
-        except (TypeError, ValueError):
-            raise ValueError(
-                "Frequency axis is missing or invalid and cannot be rebuilt "
-                "without sample_rate and source_signal_len."
-            )
-
-        if (
-            not np.isfinite(sample_rate)
-            or sample_rate <= 0.0
-            or source_signal_len <= 0
-            or spectrum_len > source_signal_len
-        ):
-            raise ValueError(
-                "Frequency axis is missing or invalid and fallback metadata is invalid."
-            )
-
-        bin_width = sample_rate / source_signal_len
-        return np.arange(spectrum_len, dtype=float) * bin_width
+        return rebuild_frequency_axis(
+            spectrum_len,
+            sample_rate,
+            source_signal_len,
+        )
