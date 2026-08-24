@@ -19,7 +19,8 @@ from PyQt5.QtWidgets import (
     QPushButton, QTableWidget, QTableWidgetItem, QLabel,
     QFileDialog, QHBoxLayout, QMessageBox, QInputDialog, QTextEdit,
     QHeaderView, QDialog, QFormLayout, QComboBox, QDialogButtonBox, QSpinBox,
-    QCheckBox, QDoubleSpinBox, QGroupBox, QStatusBar, QTabWidget, QAction
+    QCheckBox, QDoubleSpinBox, QGroupBox, QStatusBar, QTabWidget, QAction,
+    QProgressDialog,
 )
 from PyQt5.QtCore import Qt, QSettings
 from PyQt5.QtGui import (QFont, QColor, QPalette, QFontDatabase, QKeySequence,
@@ -37,6 +38,10 @@ from python_analyzer.core.identification import (
 )
 from python_analyzer.readers import read_spectrum_file, SpectrumFileFormatError
 from python_analyzer.analysis.models import AnalysisSettings, LoadedSpectrum
+from python_analyzer.analysis.batch import (
+    BatchSelectionError,
+    analyze_spectrum_files,
+)
 from python_analyzer.analysis import filters
 from python_analyzer.analysis.manual_peaks import (
     editable_peak_from_values,
@@ -113,6 +118,7 @@ from python_analyzer.gui.recent_files import (
     suggested_dialog_path,
 )
 from python_analyzer.gui.reference_library import ReferenceLibraryDialog
+from python_analyzer.gui.batch_results import BatchResultsDialog
 from python_analyzer.gui.theme import FONT_CANDIDATES, apply_app_theme
 
 # Top level constants and functions needed (copied from original for self contained)
@@ -547,6 +553,13 @@ class MainWindow(QMainWindow):
             "Open a CSV or TXT spectrum file",
         )
         file_menu.addAction(self.open_file_action)
+
+        self.batch_analysis_action = QAction("Batch Analyze Spectra...", self)
+        self.batch_analysis_action.setStatusTip(
+            "Analyze multiple CSV or TXT spectra sequentially"
+        )
+        self.batch_analysis_action.triggered.connect(self.run_batch_analysis)
+        file_menu.addAction(self.batch_analysis_action)
 
         self.open_session_action = QAction("Open Analysis Session...", self)
         self.open_session_action.setStatusTip("Open a saved ChromaTsvet analysis session")
@@ -1557,6 +1570,65 @@ class MainWindow(QMainWindow):
             return
 
         self._load_spectrum_file(Path(file))
+
+    def run_batch_analysis(self):
+        files, _ = QFileDialog.getOpenFileNames(
+            self,
+            "Select spectra for batch analysis",
+            load_last_directory(self.settings),
+            "Spectrum files (*.csv *.txt)",
+        )
+        if not files:
+            return
+
+        remember_last_directory(self.settings, Path(files[0]))
+        settings_snapshot = self._build_analysis_settings()
+        progress = QProgressDialog(
+            "Preparing batch analysis...",
+            "Cancel",
+            0,
+            len(files),
+            self,
+        )
+        progress.setWindowTitle("Batch Analysis")
+        progress.setWindowModality(Qt.WindowModal)
+        progress.setMinimumDuration(0)
+        progress_label = QLabel("Preparing batch analysis...", progress)
+        progress_label.setTextFormat(Qt.PlainText)
+        progress.setLabel(progress_label)
+
+        def update_progress(index, total, source_name):
+            progress.setMaximum(total)
+            progress.setValue(index - 1)
+            progress_label.setText(f"Analyzing {source_name} ({index}/{total})")
+            QApplication.processEvents()
+
+        try:
+            summary = analyze_spectrum_files(
+                files,
+                settings_snapshot,
+                should_cancel=progress.wasCanceled,
+                on_progress=update_progress,
+            )
+        except BatchSelectionError as exc:
+            self._show_warning(
+                "Invalid batch selection",
+                str(exc),
+                log_message="Batch analysis rejected an invalid selection",
+                status_message="Batch selection rejected",
+            )
+            return
+        finally:
+            progress.close()
+
+        self.log(
+            "Batch analysis finished: "
+            f"{summary.successful_count} successful, "
+            f"{summary.failed_count} failed, "
+            f"cancelled={summary.cancelled}",
+            status_message="Batch analysis finished",
+        )
+        BatchResultsDialog(self, summary).exec()
 
     def _read_spectrum_file_for_ui(self, file_path, *, role="spectrum"):
         file_label = display_file_label(file_path)
