@@ -61,5 +61,5 @@ def test_main_window_batch_action_wires_selection_to_headless_runner(qapp, tmp_p
     assert callable(analyze_batch.call_args.kwargs["should_cancel"])
     assert load_last_directory(window.settings) == str(tmp_path)
     assert progress.isVisible() is False
-    dialog_class.assert_called_once_with(window, summary)
+    dialog_class.assert_called_once_with(window, summary, settings=window.settings)
     results_dialog.exec.assert_called_once()
