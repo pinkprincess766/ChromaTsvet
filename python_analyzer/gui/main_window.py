@@ -1628,7 +1628,7 @@ class MainWindow(QMainWindow):
             f"cancelled={summary.cancelled}",
             status_message="Batch analysis finished",
         )
-        BatchResultsDialog(self, summary).exec()
+        BatchResultsDialog(self, summary, settings=self.settings).exec()
 
     def _read_spectrum_file_for_ui(self, file_path, *, role="spectrum"):
         file_label = display_file_label(file_path)
