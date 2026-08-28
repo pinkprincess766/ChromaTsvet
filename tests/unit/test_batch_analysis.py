@@ -6,6 +6,7 @@ from unittest.mock import Mock
 
 import pytest
 
+from python_analyzer.analysis import batch as batch_module
 from python_analyzer.analysis.batch import (
     BATCH_STATUS_FAILED,
     BATCH_STATUS_SUCCESS,
@@ -79,6 +80,10 @@ def test_batch_isolates_per_file_failures_and_preserves_order(tmp_path):
     assert summary.items[0].point_count == 3
     assert summary.items[0].peak_count == 1
     assert summary.items[0].warning_count == 1
+    assert summary.items[0].peak_details_available is True
+    assert len(summary.items[0].peak_records) == 1
+    assert summary.items[0].peak_records[0].frequency == 25.0
+    assert summary.items[0].peak_records[0].review_status == "accepted"
     assert str(tmp_path) not in summary.items[1].error_message
     assert processor.call_count == 2
 
@@ -219,3 +224,70 @@ def test_batch_rejects_oversized_file_without_calling_processor(tmp_path):
     assert summary.items[0].status == BATCH_STATUS_FAILED
     assert summary.items[0].error_message == "Unsupported or malformed spectrum data."
     processor.assert_not_called()
+
+
+def test_batch_peak_snapshot_removes_non_finite_values(tmp_path):
+    source = write_spectrum(tmp_path / "finite-export.csv")
+    result = valid_result()
+    result["peaks"][0].frequency = float("nan")
+    result["peaks"][0].area = float("inf")
+
+    summary = analyze_spectrum_files(
+        [source],
+        analysis_settings(),
+        processor=Mock(return_value=result),
+    )
+
+    record = summary.items[0].peak_records[0]
+    assert record.frequency is None
+    assert record.area is None
+    assert record.position == 1.0
+
+
+def test_batch_omits_peak_details_instead_of_truncating_them(
+    tmp_path,
+    monkeypatch,
+):
+    source = write_spectrum(tmp_path / "many-peaks.csv")
+    result = valid_result()
+    result["peaks"] = result["peaks"] * 2
+    monkeypatch.setattr(batch_module, "MAX_BATCH_PEAK_RECORDS_PER_FILE", 1)
+
+    summary = analyze_spectrum_files(
+        [source],
+        analysis_settings(),
+        processor=Mock(return_value=result),
+    )
+
+    item = summary.items[0]
+    assert item.status == BATCH_STATUS_SUCCESS
+    assert item.peak_count == 2
+    assert item.peak_records == ()
+    assert item.peak_details_available is False
+    assert "omitted" in item.peak_details_message
+
+
+def test_batch_metadata_whitelists_filter_parameters_and_redacts_paths(tmp_path):
+    source = write_spectrum(tmp_path / "metadata.csv")
+    settings = analysis_settings()
+    result = valid_result()
+    result["baseline_method"] = "/Users/example/private/baseline"
+
+    summary = analyze_spectrum_files(
+        [source],
+        settings,
+        processor=Mock(return_value=result),
+    )
+
+    metadata = dict(summary.items[0].analysis_metadata)
+    assert batch_module._safe_filter_parameters(
+        {
+            "window_size": 5,
+            "secret_path": "/Users/example/private",
+        }
+    ) == '{"window_size":5}'
+    assert batch_module._safe_filter_parameters(
+        {"window_size": "/Users/example/private"}
+    ) == "{}"
+    assert metadata["baseline"] == "[redacted]"
+    assert "/Users/example" not in repr(summary)
