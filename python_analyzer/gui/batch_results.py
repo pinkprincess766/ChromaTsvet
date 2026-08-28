@@ -23,7 +23,11 @@ from python_analyzer.analysis.batch import (
     BatchAnalysisItem,
     BatchAnalysisSummary,
 )
-from python_analyzer.exporters import write_batch_detail_archive
+from python_analyzer.exporters import (
+    write_batch_detail_archive,
+    write_batch_summary_csv,
+    write_batch_summary_excel,
+)
 from python_analyzer.gui.recent_files import (
     remember_last_directory,
     suggested_dialog_path,
@@ -77,51 +81,108 @@ class BatchResultsDialog(QDialog):
             "Export Details ZIP...",
             QDialogButtonBox.ActionRole,
         )
+        self.export_csv_button = buttons.addButton(
+            "Export CSV...",
+            QDialogButtonBox.ActionRole,
+        )
+        self.export_excel_button = buttons.addButton(
+            "Export Excel...",
+            QDialogButtonBox.ActionRole,
+        )
+        self.export_csv_button.clicked.connect(self.export_csv)
+        self.export_excel_button.clicked.connect(self.export_excel)
         self.export_details_button.clicked.connect(self.export_details_archive)
         buttons.rejected.connect(self.reject)
         layout.addWidget(buttons)
 
     def export_details_archive(self) -> None:
+        self._export_result(
+            title="Export detailed batch results",
+            default_name="batch-analysis-details.zip",
+            file_filter="ZIP Archive (*.zip)",
+            suffix=".zip",
+            writer=write_batch_detail_archive,
+            log_label="Detailed batch archive",
+            success_message="Detailed batch results were exported as a ZIP archive.",
+            failure_subject="detailed batch archive",
+        )
+
+    def export_csv(self) -> None:
+        self._export_result(
+            title="Export batch summary as CSV",
+            default_name="batch-analysis-summary.csv",
+            file_filter="CSV (*.csv)",
+            suffix=".csv",
+            writer=write_batch_summary_csv,
+            log_label="Batch summary CSV",
+            success_message="Batch summary exported as CSV.",
+            failure_subject="batch summary",
+        )
+
+    def export_excel(self) -> None:
+        self._export_result(
+            title="Export batch summary as Excel",
+            default_name="batch-analysis-summary.xlsx",
+            file_filter="Excel Workbook (*.xlsx)",
+            suffix=".xlsx",
+            writer=write_batch_summary_excel,
+            log_label="Batch summary XLSX",
+            success_message="Batch summary exported as XLSX.",
+            failure_subject="batch summary",
+        )
+
+    def _export_result(
+        self,
+        *,
+        title: str,
+        default_name: str,
+        file_filter: str,
+        suffix: str,
+        writer,
+        log_label: str,
+        success_message: str,
+        failure_subject: str,
+    ) -> None:
         suggested_path = (
-            suggested_dialog_path(self.settings, "batch-analysis-details.zip")
+            suggested_dialog_path(self.settings, default_name)
             if self.settings is not None
-            else "batch-analysis-details.zip"
+            else default_name
         )
         selected_path, _ = QFileDialog.getSaveFileName(
             self,
-            "Export detailed batch results",
+            title,
             suggested_path,
-            "ZIP Archive (*.zip)",
+            file_filter,
         )
         if not selected_path:
             return
 
         output_path = Path(selected_path)
-        if output_path.suffix.casefold() != ".zip":
-            output_path = output_path.with_suffix(".zip")
+        if output_path.suffix.casefold() != suffix:
+            output_path = output_path.with_suffix(suffix)
 
         try:
-            write_batch_detail_archive(output_path, self.summary)
+            writer(output_path, self.summary)
         except Exception as exc:
             self._log_export_event(
-                f"Detailed batch export failed ({type(exc).__name__})",
+                f"{log_label} export failed ({type(exc).__name__})",
                 level="error",
             )
             QMessageBox.warning(
                 self,
                 "Export failed",
-                "The detailed batch archive could not be written. Choose a "
+                f"The {failure_subject} could not be written. Choose a "
                 "writable folder and try again.",
             )
             return
 
         if self.settings is not None:
             remember_last_directory(self.settings, output_path)
-        self._log_export_event("Detailed batch archive exported")
+        self._log_export_event(f"{log_label} exported")
         QMessageBox.information(
             self,
             "Export complete",
-            "Detailed batch results were exported as a ZIP archive.",
+            success_message,
         )
 
     def _log_export_event(self, message: str, *, level: str = "info") -> None:

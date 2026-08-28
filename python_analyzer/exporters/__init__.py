@@ -5,6 +5,7 @@ from .batch_detail_archive import (
     BatchDetailArchiveError,
     write_batch_detail_archive,
 )
+from .batch_summary import write_batch_summary_csv, write_batch_summary_excel
 from .excel_report import ExcelReportExporter
 from .html_report import HTMLReportExporter
 from .peak_csv import PEAK_CSV_HEADERS, write_peaks_csv
@@ -20,5 +21,7 @@ __all__ = [
     "PDFReportExporter",
     "PEAK_CSV_HEADERS",
     "write_batch_detail_archive",
+    "write_batch_summary_csv",
+    "write_batch_summary_excel",
     "write_peaks_csv",
 ]
