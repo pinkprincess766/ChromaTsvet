@@ -45,6 +45,10 @@ def test_reference_metadata_update_preserves_stored_signal_data():
             cas_number="108-88-3",
             manufacturer="Example Standards",
             categories=("Aromatic", "Solvent"),
+            sample_id="QC-2026-014",
+            instrument="RamanScope 500",
+            operator_name="Lab Operator",
+            measurement_date="2026-08-29",
         )
 
         updated = {
@@ -53,7 +57,8 @@ def test_reference_metadata_update_preserves_stored_signal_data():
         row = identifier.conn.execute(
             """
             SELECT formula, data_type, peaks_json, description, cas_number,
-                   manufacturer, categories_json, schema_version
+                   manufacturer, categories_json, sample_id, instrument,
+                   operator_name, measurement_date, schema_version
             FROM compounds WHERE id = ?
             """,
             (entry.reference_id,),
@@ -65,6 +70,10 @@ def test_reference_metadata_update_preserves_stored_signal_data():
         assert updated.cas_number == "108-88-3"
         assert updated.manufacturer == "Example Standards"
         assert updated.categories == ("Aromatic", "Solvent")
+        assert updated.sample_id == "QC-2026-014"
+        assert updated.instrument == "RamanScope 500"
+        assert updated.operator_name == "Lab Operator"
+        assert updated.measurement_date == "2026-08-29"
         assert updated.peak_count == 1
         assert row[0] == "C7H8"
         assert row[1] == "raman"
@@ -73,7 +82,11 @@ def test_reference_metadata_update_preserves_stored_signal_data():
         assert row[4] == "108-88-3"
         assert row[5] == "Example Standards"
         assert row[6] == '["Aromatic", "Solvent"]'
-        assert row[7] == 3
+        assert row[7] == "QC-2026-014"
+        assert row[8] == "RamanScope 500"
+        assert row[9] == "Lab Operator"
+        assert row[10] == "2026-08-29"
+        assert row[11] == 4
     finally:
         identifier.close()
 
@@ -90,11 +103,17 @@ def test_reference_metadata_update_rejects_invalid_inputs():
             "Valid",
             cas_number="64-17-6",
         )
+        assert not identifier.update_reference_metadata(
+            entry.reference_id,
+            "Valid",
+            measurement_date="2026-02-30",
+        )
 
         unchanged = {
             item.reference_id: item for item in identifier.list_references()
         }[entry.reference_id]
         assert unchanged.name == entry.name
+        assert unchanged.measurement_date == ""
     finally:
         identifier.close()
 
@@ -169,11 +188,19 @@ def test_reference_repository_migrates_legacy_database_without_data_loss(tmp_pat
     assert entry.cas_number == ""
     assert entry.manufacturer == ""
     assert entry.categories == ()
+    assert entry.sample_id == ""
+    assert entry.instrument == ""
+    assert entry.operator_name == ""
+    assert entry.measurement_date == ""
     assert {
         "description",
         "cas_number",
         "manufacturer",
         "categories_json",
+        "sample_id",
+        "instrument",
+        "operator_name",
+        "measurement_date",
     }.issubset(columns)
 
 
@@ -254,6 +281,10 @@ def test_reference_library_dialog_edits_selected_metadata(qapp, monkeypatch):
         cas_number = "7732-18-5"
         manufacturer = "Standards Lab"
         categories = ("Water", "Calibration")
+        sample_id = "WATER-17"
+        instrument = "UV-Vis 200"
+        operator_name = "Operator A"
+        measurement_date = "2026-08-28"
 
         def __init__(self, parent, entry):
             self.entry = entry
@@ -282,6 +313,10 @@ def test_reference_library_dialog_edits_selected_metadata(qapp, monkeypatch):
         assert entries["Edited Legacy"].cas_number == "7732-18-5"
         assert entries["Edited Legacy"].manufacturer == "Standards Lab"
         assert entries["Edited Legacy"].categories == ("Water", "Calibration")
+        assert entries["Edited Legacy"].sample_id == "WATER-17"
+        assert entries["Edited Legacy"].instrument == "UV-Vis 200"
+        assert entries["Edited Legacy"].operator_name == "Operator A"
+        assert entries["Edited Legacy"].measurement_date == "2026-08-28"
     finally:
         identifier.close()
         dialog.close()
@@ -302,10 +337,17 @@ def test_reference_library_dialog_searches_and_filters_extended_metadata(qapp):
             cas_number="108-88-3",
             manufacturer="Reference Works",
             categories=("QC", "Aromatic"),
+            sample_id="RAMAN-QC-1",
+            instrument="RamanScope 500",
+            operator_name="Operator B",
+            measurement_date="2026-08-27",
         )
 
         dialog = ReferenceLibraryDialog(None, identifier)
         dialog.search_edit.setText("108-88-3")
+        assert [item.name for item in dialog.visible_entries] == ["Raman Peak"]
+
+        dialog.search_edit.setText("RamanScope 500")
         assert [item.name for item in dialog.visible_entries] == ["Raman Peak"]
 
         dialog.search_edit.clear()

@@ -8,6 +8,7 @@ files must stay outside this boundary.
 from __future__ import annotations
 
 import csv
+from datetime import date
 import json
 import math
 import re
@@ -20,10 +21,11 @@ from python_analyzer.analysis.models import ReferencePeak
 
 
 EXPORT_FORMAT = "chromatsvet.reference_library"
-EXPORT_SCHEMA_VERSION = 2
+EXPORT_SCHEMA_VERSION = 3
 SUPPORTED_EXPORT_SCHEMA_VERSIONS = frozenset(range(1, EXPORT_SCHEMA_VERSION + 1))
 REFERENCE_RECORD_SCHEMA_VERSION = 2
 REFERENCE_METADATA_SCHEMA_VERSION = 3
+REFERENCE_ACQUISITION_SCHEMA_VERSION = 4
 
 MAX_REFERENCE_RECORDS = 2_000
 MAX_REFERENCE_NAME_LENGTH = 200
@@ -31,6 +33,9 @@ MAX_REFERENCE_FORMULA_LENGTH = 200
 MAX_REFERENCE_DESCRIPTION_LENGTH = 4_000
 MAX_REFERENCE_CAS_LENGTH = 12
 MAX_REFERENCE_MANUFACTURER_LENGTH = 200
+MAX_REFERENCE_SAMPLE_ID_LENGTH = 160
+MAX_REFERENCE_INSTRUMENT_LENGTH = 200
+MAX_REFERENCE_OPERATOR_LENGTH = 200
 MAX_REFERENCE_CATEGORIES = 32
 MAX_REFERENCE_CATEGORY_LENGTH = 80
 MAX_SPECTRUM_POINTS = 200_000
@@ -70,7 +75,13 @@ METADATA_CSV_HEADERS = [
     "manufacturer",
     "categories_json",
 ]
-CSV_HEADERS = [*BASE_CSV_HEADERS, *METADATA_CSV_HEADERS]
+ACQUISITION_CSV_HEADERS = [
+    "sample_id",
+    "instrument",
+    "operator_name",
+    "measurement_date",
+]
+CSV_HEADERS = [*BASE_CSV_HEADERS, *METADATA_CSV_HEADERS, *ACQUISITION_CSV_HEADERS]
 
 _CSV_FORMULA_PREFIXES = ("=", "+", "-", "@")
 _CAS_NUMBER_PATTERN = re.compile(r"^(\d{2,7})-(\d{2})-(\d)$")
@@ -95,6 +106,10 @@ class ReferenceLibraryRecord:
     cas_number: str = ""
     manufacturer: str = ""
     categories: tuple[str, ...] = field(default_factory=tuple)
+    sample_id: str = ""
+    instrument: str = ""
+    operator_name: str = ""
+    measurement_date: str = ""
 
     @property
     def peak_count(self) -> int:
@@ -227,6 +242,22 @@ def merge_reference_records(
             merged_schema_version,
             REFERENCE_METADATA_SCHEMA_VERSION,
         )
+    if any(
+        (
+            incoming.sample_id,
+            existing.sample_id,
+            incoming.instrument,
+            existing.instrument,
+            incoming.operator_name,
+            existing.operator_name,
+            incoming.measurement_date,
+            existing.measurement_date,
+        )
+    ):
+        merged_schema_version = max(
+            merged_schema_version,
+            REFERENCE_ACQUISITION_SCHEMA_VERSION,
+        )
     return ReferenceLibraryRecord(
         name=existing.name,
         formula=incoming.formula or existing.formula,
@@ -234,6 +265,10 @@ def merge_reference_records(
         cas_number=incoming.cas_number or existing.cas_number,
         manufacturer=incoming.manufacturer or existing.manufacturer,
         categories=merged_categories,
+        sample_id=incoming.sample_id or existing.sample_id,
+        instrument=incoming.instrument or existing.instrument,
+        operator_name=incoming.operator_name or existing.operator_name,
+        measurement_date=incoming.measurement_date or existing.measurement_date,
         data_type=(
             incoming.data_type
             if incoming.data_type != DEFAULT_DATA_TYPE
@@ -309,6 +344,10 @@ def write_reference_csv(
                     "description": escape_csv_text(payload["description"]),
                     "cas_number": escape_csv_text(payload["cas_number"]),
                     "manufacturer": escape_csv_text(payload["manufacturer"]),
+                    "sample_id": escape_csv_text(payload["sample_id"]),
+                    "instrument": escape_csv_text(payload["instrument"]),
+                    "operator_name": escape_csv_text(payload["operator_name"]),
+                    "measurement_date": payload["measurement_date"],
                     "categories_json": json.dumps(
                         payload["categories"],
                         ensure_ascii=False,
@@ -376,6 +415,16 @@ def _read_reference_csv_utf8(input_path: str | Path) -> list[ReferenceLibraryRec
                     raise ReferenceLibraryFormatError(
                         f"reference CSV row {row_index} is missing v2 metadata columns"
                     )
+            if export_schema_version >= 3:
+                missing_acquisition = [
+                    header
+                    for header in ACQUISITION_CSV_HEADERS
+                    if header not in reader.fieldnames
+                ]
+                if missing_acquisition:
+                    raise ReferenceLibraryFormatError(
+                        f"reference CSV row {row_index} is missing v3 acquisition columns"
+                    )
             records.append(_record_from_csv_row(row, row_index))
 
     _validate_record_count(len(records))
@@ -392,6 +441,10 @@ def record_to_payload(record: ReferenceLibraryRecord) -> dict[str, Any]:
         "cas_number": clean_record.cas_number,
         "manufacturer": clean_record.manufacturer,
         "categories": list(clean_record.categories),
+        "sample_id": clean_record.sample_id,
+        "instrument": clean_record.instrument,
+        "operator_name": clean_record.operator_name,
+        "measurement_date": clean_record.measurement_date,
         "data_type": clean_record.data_type,
         "schema_version": clean_record.schema_version,
         "spectrum": list(clean_record.spectrum),
@@ -436,6 +489,28 @@ def record_from_payload(
                 field_name=f"{row_label}.manufacturer",
                 required=False,
             ),
+            sample_id=_clean_text(
+                payload.get("sample_id", ""),
+                max_length=MAX_REFERENCE_SAMPLE_ID_LENGTH,
+                field_name=f"{row_label}.sample_id",
+                required=False,
+            ),
+            instrument=_clean_text(
+                payload.get("instrument", ""),
+                max_length=MAX_REFERENCE_INSTRUMENT_LENGTH,
+                field_name=f"{row_label}.instrument",
+                required=False,
+            ),
+            operator_name=_clean_text(
+                payload.get("operator_name", ""),
+                max_length=MAX_REFERENCE_OPERATOR_LENGTH,
+                field_name=f"{row_label}.operator_name",
+                required=False,
+            ),
+            measurement_date=normalize_measurement_date(
+                payload.get("measurement_date", ""),
+                field_name=f"{row_label}.measurement_date",
+            ),
             categories=normalize_reference_categories(
                 payload.get("categories", []),
                 field_name=f"{row_label}.categories",
@@ -444,7 +519,7 @@ def record_from_payload(
             schema_version=_parse_schema_version(
                 payload.get("schema_version", 1),
                 field_name=f"{row_label}.schema_version",
-                max_supported=REFERENCE_METADATA_SCHEMA_VERSION,
+                max_supported=REFERENCE_ACQUISITION_SCHEMA_VERSION,
             ),
             spectrum=_coerce_float_sequence(
                 payload.get("spectrum", []),
@@ -482,6 +557,28 @@ def coerce_reference_record(record: ReferenceLibraryRecord) -> ReferenceLibraryR
         field_name="record.manufacturer",
         required=False,
     )
+    sample_id = _clean_text(
+        record.sample_id,
+        max_length=MAX_REFERENCE_SAMPLE_ID_LENGTH,
+        field_name="record.sample_id",
+        required=False,
+    )
+    instrument = _clean_text(
+        record.instrument,
+        max_length=MAX_REFERENCE_INSTRUMENT_LENGTH,
+        field_name="record.instrument",
+        required=False,
+    )
+    operator_name = _clean_text(
+        record.operator_name,
+        max_length=MAX_REFERENCE_OPERATOR_LENGTH,
+        field_name="record.operator_name",
+        required=False,
+    )
+    measurement_date = normalize_measurement_date(
+        record.measurement_date,
+        field_name="record.measurement_date",
+    )
     categories = normalize_reference_categories(
         record.categories,
         field_name="record.categories",
@@ -496,12 +593,14 @@ def coerce_reference_record(record: ReferenceLibraryRecord) -> ReferenceLibraryR
     schema_version = _parse_schema_version(
         record.schema_version,
         field_name="record.schema_version",
-        max_supported=REFERENCE_METADATA_SCHEMA_VERSION,
+        max_supported=REFERENCE_ACQUISITION_SCHEMA_VERSION,
     )
     if peaks:
         schema_version = max(schema_version, REFERENCE_RECORD_SCHEMA_VERSION)
     if description or cas_number or manufacturer or categories:
         schema_version = max(schema_version, REFERENCE_METADATA_SCHEMA_VERSION)
+    if sample_id or instrument or operator_name or measurement_date:
+        schema_version = max(schema_version, REFERENCE_ACQUISITION_SCHEMA_VERSION)
     return ReferenceLibraryRecord(
         name=name,
         formula=formula,
@@ -509,6 +608,10 @@ def coerce_reference_record(record: ReferenceLibraryRecord) -> ReferenceLibraryR
         cas_number=cas_number,
         manufacturer=manufacturer,
         categories=categories,
+        sample_id=sample_id,
+        instrument=instrument,
+        operator_name=operator_name,
+        measurement_date=measurement_date,
         data_type=normalize_data_type(record.data_type),
         schema_version=schema_version,
         spectrum=spectrum,
@@ -568,6 +671,32 @@ def normalize_cas_number(value: object, *, field_name: str = "cas_number") -> st
     if expected_check_digit != int(match.group(3)):
         raise ReferenceLibraryFormatError(f"{field_name} has an invalid check digit")
     return text
+
+
+def normalize_measurement_date(
+    value: object,
+    *,
+    field_name: str = "measurement_date",
+) -> str:
+    """Return an ISO calendar date without inventing time-zone precision."""
+
+    text = _clean_text(
+        value,
+        max_length=10,
+        field_name=field_name,
+        required=False,
+    )
+    if not text:
+        return ""
+    try:
+        normalized = date.fromisoformat(text).isoformat()
+    except ValueError as exc:
+        raise ReferenceLibraryFormatError(
+            f"{field_name} must use YYYY-MM-DD"
+        ) from exc
+    if normalized != text:
+        raise ReferenceLibraryFormatError(f"{field_name} must use YYYY-MM-DD")
+    return normalized
 
 
 def normalize_reference_categories(
@@ -642,6 +771,10 @@ def _record_from_csv_row(row: dict[str, str], row_index: int) -> ReferenceLibrar
             "description": unescape_csv_text(row.get("description", "")),
             "cas_number": unescape_csv_text(row.get("cas_number", "")),
             "manufacturer": unescape_csv_text(row.get("manufacturer", "")),
+            "sample_id": unescape_csv_text(row.get("sample_id", "")),
+            "instrument": unescape_csv_text(row.get("instrument", "")),
+            "operator_name": unescape_csv_text(row.get("operator_name", "")),
+            "measurement_date": row.get("measurement_date", ""),
             "categories": categories,
             "data_type": row.get("data_type", DEFAULT_DATA_TYPE),
             "schema_version": row.get("record_schema_version", 1),

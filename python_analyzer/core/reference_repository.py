@@ -20,7 +20,11 @@ from python_analyzer.core.peak_matching import (
 from python_analyzer.core.reference_library_io import (
     MAX_REFERENCE_CAS_LENGTH,
     MAX_REFERENCE_DESCRIPTION_LENGTH,
+    MAX_REFERENCE_INSTRUMENT_LENGTH,
     MAX_REFERENCE_MANUFACTURER_LENGTH,
+    MAX_REFERENCE_OPERATOR_LENGTH,
+    MAX_REFERENCE_SAMPLE_ID_LENGTH,
+    REFERENCE_ACQUISITION_SCHEMA_VERSION,
     REFERENCE_METADATA_SCHEMA_VERSION,
     ReferenceImportPreview,
     ReferenceImportResult,
@@ -31,6 +35,7 @@ from python_analyzer.core.reference_library_io import (
     merge_reference_records,
     normalize_cas_number,
     normalize_duplicate_policy,
+    normalize_measurement_date,
     normalize_reference_categories,
     validate_reference_collection_limits,
 )
@@ -48,6 +53,10 @@ KNOWN_COLUMN_DEFINITIONS = {
     "cas_number": "TEXT DEFAULT ''",
     "manufacturer": "TEXT DEFAULT ''",
     "categories_json": "TEXT DEFAULT '[]'",
+    "sample_id": "TEXT DEFAULT ''",
+    "instrument": "TEXT DEFAULT ''",
+    "operator_name": "TEXT DEFAULT ''",
+    "measurement_date": "TEXT DEFAULT ''",
 }
 
 
@@ -66,6 +75,10 @@ class ReferenceLibraryEntry:
     cas_number: str = ""
     manufacturer: str = ""
     categories: tuple[str, ...] = ()
+    sample_id: str = ""
+    instrument: str = ""
+    operator_name: str = ""
+    measurement_date: str = ""
 
 
 class ReferenceRepository:
@@ -115,7 +128,11 @@ class ReferenceRepository:
                 description TEXT DEFAULT '',
                 cas_number TEXT DEFAULT '',
                 manufacturer TEXT DEFAULT '',
-                categories_json TEXT DEFAULT '[]'
+                categories_json TEXT DEFAULT '[]',
+                sample_id TEXT DEFAULT '',
+                instrument TEXT DEFAULT '',
+                operator_name TEXT DEFAULT '',
+                measurement_date TEXT DEFAULT ''
             )
         """)
         for column_name in KNOWN_COLUMN_DEFINITIONS:
@@ -152,6 +169,10 @@ class ReferenceRepository:
         cas_number: str = "",
         manufacturer: str = "",
         categories: list[str] | tuple[str, ...] | str = (),
+        sample_id: str = "",
+        instrument: str = "",
+        operator_name: str = "",
+        measurement_date: str = "",
     ) -> bool:
         """Add or update a reference row after sanitizing numeric payloads."""
 
@@ -182,6 +203,25 @@ class ReferenceRepository:
                 allow_empty=True,
             )
             clean_categories = normalize_reference_categories(categories)
+            clean_sample_id = _safe_user_text(
+                sample_id,
+                label="sample id",
+                max_length=MAX_REFERENCE_SAMPLE_ID_LENGTH,
+                allow_empty=True,
+            )
+            clean_instrument = _safe_user_text(
+                instrument,
+                label="instrument",
+                max_length=MAX_REFERENCE_INSTRUMENT_LENGTH,
+                allow_empty=True,
+            )
+            clean_operator_name = _safe_user_text(
+                operator_name,
+                label="operator name",
+                max_length=MAX_REFERENCE_OPERATOR_LENGTH,
+                allow_empty=True,
+            )
+            clean_measurement_date = normalize_measurement_date(measurement_date)
 
             spectrum_json = None
             peaks_json = None
@@ -198,6 +238,15 @@ class ReferenceRepository:
                 schema_ver = 2
             else:
                 schema_ver = 1
+            if any(
+                (
+                    clean_sample_id,
+                    clean_instrument,
+                    clean_operator_name,
+                    clean_measurement_date,
+                )
+            ):
+                schema_ver = REFERENCE_ACQUISITION_SCHEMA_VERSION
 
             if intensities is not None:
                 clean_intensities = []
@@ -240,8 +289,9 @@ class ReferenceRepository:
                 """
                 INSERT OR REPLACE INTO compounds
                 (name, formula, spectrum, peaks_json, schema_version, data_type,
-                 description, cas_number, manufacturer, categories_json)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 description, cas_number, manufacturer, categories_json,
+                 sample_id, instrument, operator_name, measurement_date)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     clean_name,
@@ -254,6 +304,10 @@ class ReferenceRepository:
                     clean_cas_number,
                     clean_manufacturer,
                     json.dumps(list(clean_categories), ensure_ascii=False),
+                    clean_sample_id,
+                    clean_instrument,
+                    clean_operator_name,
+                    clean_measurement_date,
                 ),
             )
             self.conn.commit()
@@ -282,7 +336,8 @@ class ReferenceRepository:
         cursor = self.conn.execute(
             """
             SELECT id, name, formula, spectrum, peaks_json, schema_version, data_type,
-                   description, cas_number, manufacturer, categories_json
+                   description, cas_number, manufacturer, categories_json,
+                   sample_id, instrument, operator_name, measurement_date
             FROM compounds
             ORDER BY lower(name), id
             """
@@ -301,6 +356,10 @@ class ReferenceRepository:
                 cas_number,
                 manufacturer,
                 categories_json,
+                sample_id,
+                instrument,
+                operator_name,
+                measurement_date,
             ) = row
             entries.append(
                 ReferenceLibraryEntry(
@@ -320,6 +379,22 @@ class ReferenceRepository:
                         max_length=MAX_REFERENCE_MANUFACTURER_LENGTH,
                     ),
                     categories=_safe_categories(categories_json),
+                    sample_id=_safe_log_text(
+                        sample_id,
+                        max_length=MAX_REFERENCE_SAMPLE_ID_LENGTH,
+                    ),
+                    instrument=_safe_log_text(
+                        instrument,
+                        max_length=MAX_REFERENCE_INSTRUMENT_LENGTH,
+                    ),
+                    operator_name=_safe_log_text(
+                        operator_name,
+                        max_length=MAX_REFERENCE_OPERATOR_LENGTH,
+                    ),
+                    measurement_date=_safe_log_text(
+                        measurement_date,
+                        max_length=10,
+                    ),
                     data_type=normalize_data_type(data_type),
                     schema_version=_safe_int(schema_version, default=1),
                     spectrum_points=_json_list_length(spectrum_json),
@@ -418,7 +493,8 @@ class ReferenceRepository:
     ) -> list[tuple]:
         query = (
             "SELECT id, name, formula, spectrum, peaks_json, schema_version, data_type, "
-            "description, cas_number, manufacturer, categories_json "
+            "description, cas_number, manufacturer, categories_json, sample_id, "
+            "instrument, operator_name, measurement_date "
             "FROM compounds"
         )
         params: list[int] = []
@@ -450,6 +526,10 @@ class ReferenceRepository:
             cas_number,
             manufacturer,
             categories_json,
+            sample_id,
+            instrument,
+            operator_name,
+            measurement_date,
         ) = row
         try:
             spectrum_values = _json_payload_list(spectrum_json)
@@ -462,6 +542,10 @@ class ReferenceRepository:
                     cas_number=str(cas_number or ""),
                     manufacturer=str(manufacturer or ""),
                     categories=_safe_categories(categories_json),
+                    sample_id=str(sample_id or ""),
+                    instrument=str(instrument or ""),
+                    operator_name=str(operator_name or ""),
+                    measurement_date=str(measurement_date or ""),
                     data_type=normalize_data_type(data_type),
                     schema_version=_safe_int(schema_version, default=1),
                     spectrum=tuple(spectrum_values),
@@ -557,8 +641,9 @@ class ReferenceRepository:
             """
             INSERT INTO compounds
             (name, formula, spectrum, peaks_json, schema_version, data_type,
-             description, cas_number, manufacturer, categories_json)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             description, cas_number, manufacturer, categories_json,
+             sample_id, instrument, operator_name, measurement_date)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 clean_record.name,
@@ -571,6 +656,10 @@ class ReferenceRepository:
                 clean_record.cas_number,
                 clean_record.manufacturer,
                 json.dumps(list(clean_record.categories), ensure_ascii=False),
+                clean_record.sample_id,
+                clean_record.instrument,
+                clean_record.operator_name,
+                clean_record.measurement_date,
             ),
         )
 
@@ -608,6 +697,10 @@ class ReferenceRepository:
         cas_number: str = "",
         manufacturer: str = "",
         categories: list[str] | tuple[str, ...] | str = (),
+        sample_id: str = "",
+        instrument: str = "",
+        operator_name: str = "",
+        measurement_date: str = "",
     ) -> bool:
         """Update editable reference metadata without touching stored signal data."""
 
@@ -642,6 +735,25 @@ class ReferenceRepository:
                 allow_empty=True,
             )
             clean_categories = normalize_reference_categories(categories)
+            clean_sample_id = _safe_user_text(
+                sample_id,
+                label="sample id",
+                max_length=MAX_REFERENCE_SAMPLE_ID_LENGTH,
+                allow_empty=True,
+            )
+            clean_instrument = _safe_user_text(
+                instrument,
+                label="instrument",
+                max_length=MAX_REFERENCE_INSTRUMENT_LENGTH,
+                allow_empty=True,
+            )
+            clean_operator_name = _safe_user_text(
+                operator_name,
+                label="operator name",
+                max_length=MAX_REFERENCE_OPERATOR_LENGTH,
+                allow_empty=True,
+            )
+            clean_measurement_date = normalize_measurement_date(measurement_date)
             metadata_schema_version = (
                 REFERENCE_METADATA_SCHEMA_VERSION
                 if clean_description
@@ -650,12 +762,23 @@ class ReferenceRepository:
                 or clean_categories
                 else 1
             )
+            if any(
+                (
+                    clean_sample_id,
+                    clean_instrument,
+                    clean_operator_name,
+                    clean_measurement_date,
+                )
+            ):
+                metadata_schema_version = REFERENCE_ACQUISITION_SCHEMA_VERSION
 
             cursor = self.conn.execute(
                 """
                 UPDATE compounds
                 SET name = ?, formula = ?, data_type = ?, description = ?,
                     cas_number = ?, manufacturer = ?, categories_json = ?,
+                    sample_id = ?, instrument = ?, operator_name = ?,
+                    measurement_date = ?,
                     schema_version = MAX(COALESCE(schema_version, 1), ?)
                 WHERE id = ?
                 """,
@@ -667,6 +790,10 @@ class ReferenceRepository:
                     clean_cas_number,
                     clean_manufacturer,
                     json.dumps(list(clean_categories), ensure_ascii=False),
+                    clean_sample_id,
+                    clean_instrument,
+                    clean_operator_name,
+                    clean_measurement_date,
                     metadata_schema_version,
                     normalized_id,
                 ),

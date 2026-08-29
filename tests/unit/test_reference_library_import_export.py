@@ -60,6 +60,10 @@ def test_reference_json_export_has_schema_and_no_local_paths(tmp_path: Path):
             cas_number="108-88-3",
             manufacturer="Reference Works",
             categories=("Aromatic", "QC"),
+            sample_id="TOL-2026-08",
+            instrument="RamanScope 500",
+            operator_name="Operator A",
+            measurement_date="2026-08-29",
         )
         output_path = tmp_path / "portable.json"
 
@@ -69,9 +73,13 @@ def test_reference_json_export_has_schema_and_no_local_paths(tmp_path: Path):
 
         assert payload["format"] == EXPORT_FORMAT
         assert payload["schema_version"] == EXPORT_SCHEMA_VERSION
-        assert payload["records"][0]["schema_version"] == 3
+        assert payload["records"][0]["schema_version"] == 4
         assert payload["records"][0]["cas_number"] == "108-88-3"
         assert payload["records"][0]["categories"] == ["Aromatic", "QC"]
+        assert payload["records"][0]["sample_id"] == "TOL-2026-08"
+        assert payload["records"][0]["instrument"] == "RamanScope 500"
+        assert payload["records"][0]["operator_name"] == "Operator A"
+        assert payload["records"][0]["measurement_date"] == "2026-08-29"
         assert "Portable Raman" in exported_text
         assert str(private_db_dir) not in exported_text
         assert "library.db" not in exported_text
@@ -79,6 +87,7 @@ def test_reference_json_export_has_schema_and_no_local_paths(tmp_path: Path):
         imported = read_reference_json(output_path)
         assert imported[0].name == "Portable Raman"
         assert imported[0].manufacturer == "Reference Works"
+        assert imported[0].sample_id == "TOL-2026-08"
         assert imported[0].peaks[0].frequency == 1602.0
     finally:
         identifier.close()
@@ -91,6 +100,9 @@ def test_reference_csv_export_escapes_formula_like_text(tmp_path: Path):
             formula="+SUM(A1:A2)",
             description="@IMPORT(\"private\")",
             manufacturer="-2+3",
+            sample_id="=SAMPLE()",
+            instrument="@INSTRUMENT()",
+            operator_name="+OPERATOR()",
             categories=("=unsafe", "Safe"),
             data_type="generic",
             spectrum=(1.0, 2.0),
@@ -105,12 +117,18 @@ def test_reference_csv_export_escapes_formula_like_text(tmp_path: Path):
     assert "'+SUM" in exported_text
     assert "'@IMPORT" in exported_text
     assert "'-2+3" in exported_text
+    assert "'=SAMPLE" in exported_text
+    assert "'@INSTRUMENT" in exported_text
+    assert "'+OPERATOR" in exported_text
 
     imported = read_reference_csv(output_path)
     assert imported[0].name.startswith("=HYPERLINK")
     assert imported[0].formula == "+SUM(A1:A2)"
     assert imported[0].description == '@IMPORT("private")'
     assert imported[0].manufacturer == "-2+3"
+    assert imported[0].sample_id == "=SAMPLE()"
+    assert imported[0].instrument == "@INSTRUMENT()"
+    assert imported[0].operator_name == "+OPERATOR()"
     assert imported[0].categories == ("=unsafe", "Safe")
 
 
@@ -301,6 +319,10 @@ def test_reference_json_v1_remains_importable(tmp_path: Path):
     assert record.cas_number == ""
     assert record.manufacturer == ""
     assert record.categories == ()
+    assert record.sample_id == ""
+    assert record.instrument == ""
+    assert record.operator_name == ""
+    assert record.measurement_date == ""
 
 
 def test_reference_csv_v1_remains_importable(tmp_path: Path):
@@ -337,6 +359,10 @@ def test_reference_csv_v1_remains_importable(tmp_path: Path):
 
     assert record.name == "Legacy CSV"
     assert record.categories == ()
+    assert record.sample_id == ""
+    assert record.instrument == ""
+    assert record.operator_name == ""
+    assert record.measurement_date == ""
 
 
 def test_reference_json_rejects_future_schema(tmp_path: Path):
@@ -356,7 +382,7 @@ def test_reference_json_rejects_future_schema(tmp_path: Path):
         read_reference_json(input_path)
 
 
-@pytest.mark.parametrize("schema_version", [0, 4, 2.5, True, "2.0"])
+@pytest.mark.parametrize("schema_version", [0, 5, 2.5, True, "2.0"])
 def test_reference_json_rejects_unknown_or_non_integer_record_schema(
     tmp_path: Path,
     schema_version,
@@ -404,7 +430,7 @@ def test_reference_csv_v2_requires_metadata_columns(tmp_path: Path):
         writer.writerow(
             {
                 "format": EXPORT_FORMAT,
-                "export_schema_version": EXPORT_SCHEMA_VERSION,
+                "export_schema_version": 2,
                 "name": "Incomplete",
                 "formula": "",
                 "data_type": "generic",
@@ -416,6 +442,65 @@ def test_reference_csv_v2_requires_metadata_columns(tmp_path: Path):
 
     with pytest.raises(ReferenceLibraryFormatError, match="missing v2 metadata"):
         read_reference_csv(input_path)
+
+
+def test_reference_csv_v3_requires_acquisition_columns(tmp_path: Path):
+    input_path = tmp_path / "incomplete-v3.csv"
+    fieldnames = [
+        *reference_library_io.BASE_CSV_HEADERS,
+        *reference_library_io.METADATA_CSV_HEADERS,
+    ]
+    with input_path.open("w", newline="", encoding="utf-8") as csv_file:
+        writer = csv.DictWriter(csv_file, fieldnames=fieldnames)
+        writer.writeheader()
+        writer.writerow(
+            {
+                "format": EXPORT_FORMAT,
+                "export_schema_version": 3,
+                "name": "Incomplete",
+                "formula": "",
+                "data_type": "generic",
+                "record_schema_version": 1,
+                "spectrum_json": "[]",
+                "peaks_json": "[]",
+                "description": "",
+                "cas_number": "",
+                "manufacturer": "",
+                "categories_json": "[]",
+            }
+        )
+
+    with pytest.raises(ReferenceLibraryFormatError, match="missing v3 acquisition"):
+        read_reference_csv(input_path)
+
+
+@pytest.mark.parametrize(
+    "measurement_date",
+    ["2026-02-30", "29-08-2026", "2026-8-9", "tomorrow"],
+)
+def test_reference_import_rejects_invalid_measurement_dates(
+    tmp_path: Path,
+    measurement_date: str,
+):
+    input_path = tmp_path / "invalid-measurement-date.json"
+    input_path.write_text(
+        json.dumps(
+            {
+                "format": EXPORT_FORMAT,
+                "schema_version": EXPORT_SCHEMA_VERSION,
+                "records": [
+                    {
+                        "name": "Invalid date",
+                        "measurement_date": measurement_date,
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ReferenceLibraryFormatError, match="YYYY-MM-DD"):
+        read_reference_json(input_path)
 
 
 @pytest.mark.parametrize("suffix", ["json", "csv"])

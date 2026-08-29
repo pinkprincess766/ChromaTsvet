@@ -84,21 +84,24 @@ SQLite references support:
 - `schema_version`;
 - `data_type`;
 - scientific metadata: description, CAS Registry Number, standard
-  manufacturer, and bounded category labels.
+  manufacturer, and bounded category labels;
+- acquisition metadata: sample identifier, instrument, operator name, and an
+  ISO `YYYY-MM-DD` measurement date.
 
 Older records remain readable. Peak-only records store an empty legacy spectrum
 when needed for compatibility with older SQLite schemas.
 
-Portable reference-library documents use export schema v2. The JSON and CSV
-readers still accept schema v1 documents; missing v2 metadata is initialized to
-empty values. CAS numbers are validated by structure and check digit. Exported
-documents contain only reference data and never include database paths, source
-file paths, or recent-file state.
+Portable reference-library documents use export schema v3. The JSON and CSV
+readers still accept schema v1 and v2 documents; metadata introduced by newer
+schemas is initialized to empty values. CAS numbers are validated by structure
+and check digit, and measurement dates must use the exact ISO `YYYY-MM-DD`
+form. Exported documents contain only reference data and never include database
+paths, source file paths, or recent-file state.
 
 ## Next Steps
 
 1. Store full analysis settings alongside reference peaks.
-2. Add reference provenance and acquisition metadata to candidate details.
+2. Surface reference provenance and acquisition metadata in candidate details.
 3. Consider replacing greedy selection with an optimal assignment algorithm if
    dense or ambiguous peak sets become common.
 4. Rebuild the default reference library with real peak features.
