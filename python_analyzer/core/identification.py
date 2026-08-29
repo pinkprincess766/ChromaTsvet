@@ -101,6 +101,10 @@ class SpectrumIdentifier:
         cas_number: str = "",
         manufacturer: str = "",
         categories: list[str] | tuple[str, ...] | str = (),
+        sample_id: str = "",
+        instrument: str = "",
+        operator_name: str = "",
+        measurement_date: str = "",
     ) -> bool:
         return self.repository.add_reference(
             name,
@@ -112,6 +116,10 @@ class SpectrumIdentifier:
             cas_number=cas_number,
             manufacturer=manufacturer,
             categories=categories,
+            sample_id=sample_id,
+            instrument=instrument,
+            operator_name=operator_name,
+            measurement_date=measurement_date,
         )
 
     def clear_database(self) -> bool:
@@ -152,6 +160,10 @@ class SpectrumIdentifier:
         cas_number: str = "",
         manufacturer: str = "",
         categories: list[str] | tuple[str, ...] | str = (),
+        sample_id: str = "",
+        instrument: str = "",
+        operator_name: str = "",
+        measurement_date: str = "",
     ) -> bool:
         return self.repository.update_reference_metadata(
             reference_id,
@@ -162,6 +174,10 @@ class SpectrumIdentifier:
             cas_number=cas_number,
             manufacturer=manufacturer,
             categories=categories,
+            sample_id=sample_id,
+            instrument=instrument,
+            operator_name=operator_name,
+            measurement_date=measurement_date,
         )
 
     def restore_default(self) -> bool:

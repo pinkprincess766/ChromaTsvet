@@ -33,8 +33,11 @@ from python_analyzer.core.reference_library_io import (
     MAX_REFERENCE_CAS_LENGTH,
     MAX_REFERENCE_DESCRIPTION_LENGTH,
     MAX_REFERENCE_FORMULA_LENGTH,
+    MAX_REFERENCE_INSTRUMENT_LENGTH,
     MAX_REFERENCE_MANUFACTURER_LENGTH,
     MAX_REFERENCE_NAME_LENGTH,
+    MAX_REFERENCE_OPERATOR_LENGTH,
+    MAX_REFERENCE_SAMPLE_ID_LENGTH,
     ReferenceImportPreview,
     ReferenceLibraryFormatError,
     ReferenceLibraryRecord,
@@ -66,6 +69,15 @@ class ReferenceMetadataDialog(QDialog):
         self.cas_edit.setMaxLength(MAX_REFERENCE_CAS_LENGTH)
         self.manufacturer_edit = QLineEdit(entry.manufacturer)
         self.manufacturer_edit.setMaxLength(MAX_REFERENCE_MANUFACTURER_LENGTH)
+        self.sample_id_edit = QLineEdit(entry.sample_id)
+        self.sample_id_edit.setMaxLength(MAX_REFERENCE_SAMPLE_ID_LENGTH)
+        self.instrument_edit = QLineEdit(entry.instrument)
+        self.instrument_edit.setMaxLength(MAX_REFERENCE_INSTRUMENT_LENGTH)
+        self.operator_edit = QLineEdit(entry.operator_name)
+        self.operator_edit.setMaxLength(MAX_REFERENCE_OPERATOR_LENGTH)
+        self.measurement_date_edit = QLineEdit(entry.measurement_date)
+        self.measurement_date_edit.setMaxLength(10)
+        self.measurement_date_edit.setPlaceholderText("YYYY-MM-DD")
         self.categories_edit = QLineEdit(", ".join(entry.categories))
         self.description_edit = QTextEdit(entry.description)
         self.description_edit.setMaximumHeight(96)
@@ -79,6 +91,10 @@ class ReferenceMetadataDialog(QDialog):
         form.addRow("Formula", self.formula_edit)
         form.addRow("CAS number", self.cas_edit)
         form.addRow("Manufacturer", self.manufacturer_edit)
+        form.addRow("Sample ID", self.sample_id_edit)
+        form.addRow("Instrument", self.instrument_edit)
+        form.addRow("Operator", self.operator_edit)
+        form.addRow("Measurement date", self.measurement_date_edit)
         form.addRow("Categories", self.categories_edit)
         form.addRow("Description", self.description_edit)
         form.addRow("Data type", self.data_type_combo)
@@ -120,6 +136,30 @@ class ReferenceMetadataDialog(QDialog):
         return self.manufacturer_edit.text().strip()
 
     @property
+    def sample_id(self) -> str:
+        if self._normalized_record is not None:
+            return self._normalized_record.sample_id
+        return self.sample_id_edit.text().strip()
+
+    @property
+    def instrument(self) -> str:
+        if self._normalized_record is not None:
+            return self._normalized_record.instrument
+        return self.instrument_edit.text().strip()
+
+    @property
+    def operator_name(self) -> str:
+        if self._normalized_record is not None:
+            return self._normalized_record.operator_name
+        return self.operator_edit.text().strip()
+
+    @property
+    def measurement_date(self) -> str:
+        if self._normalized_record is not None:
+            return self._normalized_record.measurement_date
+        return self.measurement_date_edit.text().strip()
+
+    @property
     def categories(self) -> tuple[str, ...]:
         if self._normalized_record is not None:
             return self._normalized_record.categories
@@ -144,6 +184,10 @@ class ReferenceMetadataDialog(QDialog):
                     description=self.description_edit.toPlainText(),
                     cas_number=self.cas_edit.text(),
                     manufacturer=self.manufacturer_edit.text(),
+                    sample_id=self.sample_id_edit.text(),
+                    instrument=self.instrument_edit.text(),
+                    operator_name=self.operator_edit.text(),
+                    measurement_date=self.measurement_date_edit.text(),
                     categories=self.categories,
                     data_type=self.data_type_combo.currentData(),
                     schema_version=1,
@@ -259,7 +303,7 @@ class ReferenceLibraryDialog(QDialog):
         layout.addLayout(filters)
 
         self.table = QTableWidget()
-        self.table.setColumnCount(9)
+        self.table.setColumnCount(12)
         self.table.setHorizontalHeaderLabels(
             [
                 "Name",
@@ -267,6 +311,9 @@ class ReferenceLibraryDialog(QDialog):
                 "CAS",
                 "Categories",
                 "Manufacturer",
+                "Sample ID",
+                "Instrument",
+                "Measured",
                 "Data type",
                 "Schema",
                 "Points",
@@ -339,6 +386,9 @@ class ReferenceLibraryDialog(QDialog):
                 entry.cas_number,
                 ", ".join(entry.categories),
                 entry.manufacturer,
+                entry.sample_id,
+                entry.instrument,
+                entry.measurement_date,
                 entry.data_type,
                 str(entry.schema_version),
                 str(entry.spectrum_points),
@@ -379,6 +429,10 @@ class ReferenceLibraryDialog(QDialog):
             cas_number=dialog.cas_number,
             manufacturer=dialog.manufacturer,
             categories=dialog.categories,
+            sample_id=dialog.sample_id,
+            instrument=dialog.instrument,
+            operator_name=dialog.operator_name,
+            measurement_date=dialog.measurement_date,
         ):
             QMessageBox.warning(
                 self,
@@ -530,6 +584,10 @@ class ReferenceLibraryDialog(QDialog):
                 entry.cas_number,
                 entry.manufacturer,
                 entry.description,
+                entry.sample_id,
+                entry.instrument,
+                entry.operator_name,
+                entry.measurement_date,
                 *entry.categories,
             )
         ).casefold()
