@@ -353,10 +353,10 @@ and peak CSV outputs. Peak-based reference results retain matched and unmatched
 peak diagnostics, report coverage and frequency error, and expose conservative
 candidate-evidence bands for review.
 
-The next development priorities are reference acquisition metadata, stronger
-real-world tester feedback loops, cross-platform signed/notarized builds, and
-broader synthetic and real-world regression datasets. The identification model
-and its evidence limits are outlined in
+The next development priorities are representative reference-validation
+datasets, stronger real-world tester feedback loops, cross-platform
+signed/notarized builds, and broader synthetic and real-world regression
+datasets. The identification model and its evidence limits are outlined in
 [Peak-Based Identification](docs/identification.md).
 
 ## Known Limitations

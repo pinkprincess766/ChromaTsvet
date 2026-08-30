@@ -81,6 +81,25 @@ class ReferenceLibraryEntry:
     measurement_date: str = ""
 
 
+@dataclass(frozen=True)
+class ReferenceMatchSource:
+    """Path-free reference data required while building match candidates."""
+
+    name: str
+    formula: str
+    spectrum_json: str | None
+    peaks_json: str | None
+    data_type: str
+    description: str = ""
+    cas_number: str = ""
+    manufacturer: str = ""
+    categories: tuple[str, ...] = ()
+    sample_id: str = ""
+    instrument: str = ""
+    operator_name: str = ""
+    measurement_date: str = ""
+
+
 class ReferenceRepository:
     """Own SQLite persistence for reference spectra and peak features."""
 
@@ -370,10 +389,7 @@ class ReferenceRepository:
                         description,
                         max_length=MAX_REFERENCE_DESCRIPTION_LENGTH,
                     ),
-                    cas_number=_safe_log_text(
-                        cas_number,
-                        max_length=MAX_REFERENCE_CAS_LENGTH,
-                    ),
+                    cas_number=_safe_stored_cas_number(cas_number),
                     manufacturer=_safe_log_text(
                         manufacturer,
                         max_length=MAX_REFERENCE_MANUFACTURER_LENGTH,
@@ -838,6 +854,88 @@ class ReferenceRepository:
         )
         return cursor.fetchall()
 
+    def legacy_match_sources(self) -> list[ReferenceMatchSource]:
+        """Return path-free provenance alongside legacy spectrum payloads."""
+
+        return self._match_sources(require_peaks=False)
+
+    def peak_match_sources(self) -> list[ReferenceMatchSource]:
+        """Return path-free provenance alongside peak payloads."""
+
+        return self._match_sources(require_peaks=True)
+
+    def _match_sources(self, *, require_peaks: bool) -> list[ReferenceMatchSource]:
+        query = (
+            """
+            SELECT name, formula, spectrum, peaks_json, data_type, description,
+                   cas_number, manufacturer, categories_json, sample_id,
+                   instrument, operator_name, measurement_date
+            FROM compounds
+            WHERE peaks_json IS NOT NULL
+            """
+            if require_peaks
+            else """
+            SELECT name, formula, spectrum, peaks_json, data_type, description,
+                   cas_number, manufacturer, categories_json, sample_id,
+                   instrument, operator_name, measurement_date
+            FROM compounds
+            WHERE spectrum IS NOT NULL
+            """
+        )
+        cursor = self.conn.execute(query)
+        sources: list[ReferenceMatchSource] = []
+        for row in cursor.fetchall():
+            (
+                name,
+                formula,
+                spectrum_json,
+                peaks_json,
+                data_type,
+                description,
+                cas_number,
+                manufacturer,
+                categories_json,
+                sample_id,
+                instrument,
+                operator_name,
+                measurement_date,
+            ) = row
+            sources.append(
+                ReferenceMatchSource(
+                    name=_safe_log_text(name, max_length=MAX_REFERENCE_NAME_LENGTH),
+                    formula=_safe_log_text(formula, max_length=MAX_FORMULA_LENGTH),
+                    spectrum_json=spectrum_json,
+                    peaks_json=peaks_json,
+                    data_type=normalize_data_type(data_type),
+                    description=_safe_log_text(
+                        description,
+                        max_length=MAX_REFERENCE_DESCRIPTION_LENGTH,
+                    ),
+                    cas_number=_safe_stored_cas_number(cas_number),
+                    manufacturer=_safe_log_text(
+                        manufacturer,
+                        max_length=MAX_REFERENCE_MANUFACTURER_LENGTH,
+                    ),
+                    categories=_safe_categories(categories_json),
+                    sample_id=_safe_log_text(
+                        sample_id,
+                        max_length=MAX_REFERENCE_SAMPLE_ID_LENGTH,
+                    ),
+                    instrument=_safe_log_text(
+                        instrument,
+                        max_length=MAX_REFERENCE_INSTRUMENT_LENGTH,
+                    ),
+                    operator_name=_safe_log_text(
+                        operator_name,
+                        max_length=MAX_REFERENCE_OPERATOR_LENGTH,
+                    ),
+                    measurement_date=_safe_stored_measurement_date(
+                        measurement_date
+                    ),
+                )
+            )
+        return sources
+
 
 def _finite_float(value: object, default: float | None = None) -> float | None:
     try:
@@ -845,6 +943,22 @@ def _finite_float(value: object, default: float | None = None) -> float | None:
     except (TypeError, ValueError):
         return default
     return number if math.isfinite(number) else default
+
+
+def _safe_stored_cas_number(value: object) -> str:
+    try:
+        return normalize_cas_number(value)
+    except ValueError:
+        logger.warning("Ignoring invalid CAS metadata in stored reference")
+        return ""
+
+
+def _safe_stored_measurement_date(value: object) -> str:
+    try:
+        return normalize_measurement_date(value)
+    except ValueError:
+        logger.warning("Ignoring invalid measurement date in stored reference")
+        return ""
 
 
 def _safe_user_text(

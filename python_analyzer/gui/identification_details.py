@@ -12,6 +12,7 @@ from PyQt5.QtWidgets import (
     QDialog,
     QDialogButtonBox,
     QFormLayout,
+    QGroupBox,
     QHeaderView,
     QLabel,
     QTableWidget,
@@ -66,6 +67,38 @@ def has_peak_diagnostics(match: Any) -> bool:
     return getattr(match, "method", "legacy_cosine") == "peak"
 
 
+def reference_provenance_rows(match: Any) -> list[tuple[str, str]]:
+    """Return non-empty, display-safe provenance without local storage details."""
+
+    categories = getattr(match, "reference_categories", ())
+    if isinstance(categories, Sequence) and not isinstance(
+        categories,
+        (str, bytes, bytearray),
+    ):
+        category_text = ", ".join(
+            value
+            for value in (_safe_text(item, 80) for item in categories[:32])
+            if value
+        )
+    else:
+        category_text = ""
+    candidates = [
+        ("Description", getattr(match, "reference_description", "")),
+        ("CAS number", getattr(match, "reference_cas_number", "")),
+        ("Manufacturer", getattr(match, "reference_manufacturer", "")),
+        ("Categories", category_text),
+        ("Sample ID", getattr(match, "reference_sample_id", "")),
+        ("Instrument", getattr(match, "reference_instrument", "")),
+        ("Operator", getattr(match, "reference_operator_name", "")),
+        ("Measurement date", getattr(match, "reference_measurement_date", "")),
+    ]
+    return [
+        (label, clean_value)
+        for label, value in candidates
+        if (clean_value := _safe_text(value))
+    ]
+
+
 class IdentificationDetailsDialog(QDialog):
     """Show matched and unmatched peaks for one ranked candidate."""
 
@@ -116,6 +149,17 @@ class IdentificationDetailsDialog(QDialog):
                 QLabel(_format_number(getattr(match, "max_frequency_error", None), 6)),
             )
         layout.addLayout(summary)
+
+        provenance_rows = reference_provenance_rows(match)
+        if provenance_rows:
+            provenance_group = QGroupBox("Reference provenance")
+            provenance_form = QFormLayout(provenance_group)
+            for label, value in provenance_rows:
+                value_label = QLabel(value)
+                value_label.setWordWrap(True)
+                value_label.setTextInteractionFlags(Qt.TextSelectableByMouse)
+                provenance_form.addRow(label, value_label)
+            layout.addWidget(provenance_group)
 
         notice = QLabel(
             "Evidence levels rank computational candidates; they do not constitute "

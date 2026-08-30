@@ -9,6 +9,7 @@ original instrument file.
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
+from datetime import date
 import json
 import math
 from pathlib import Path
@@ -384,6 +385,9 @@ def _match_to_dict(match: Any) -> dict[str, Any]:
             32,
         ),
     }
+    provenance = _reference_provenance_to_dict(match)
+    if any(provenance.values()):
+        payload["reference_provenance"] = provenance
     if method != "peak":
         return payload
 
@@ -431,6 +435,9 @@ def _match_to_dict(match: Any) -> dict[str, Any]:
 def _match_from_dict(payload: Any) -> SimpleNamespace | PeakBasedMatchResult:
     match = _mapping(payload, "match")
     method = _safe_text(match.get("method", "legacy_cosine"), 32)
+    provenance = _reference_provenance_from_dict(
+        match.get("reference_provenance", {})
+    )
     if method == "peak":
         matched_peaks = [
             _peak_match_from_dict(item)
@@ -496,6 +503,7 @@ def _match_from_dict(payload: Any) -> SimpleNamespace | PeakBasedMatchResult:
             mean_frequency_error=evidence.mean_frequency_error,
             max_frequency_error=evidence.max_frequency_error,
             evidence_level=evidence.evidence_level,
+            **provenance,
         )
 
     return SimpleNamespace(
@@ -505,7 +513,61 @@ def _match_from_dict(payload: Any) -> SimpleNamespace | PeakBasedMatchResult:
         compared_points=_bounded_int(match.get("compared_points", 0), 0, MAX_SESSION_PEAKS),
         method="legacy_cosine",
         evidence_level=EVIDENCE_LEGACY,
+        **provenance,
     )
+
+
+def _reference_provenance_to_dict(match: Any) -> dict[str, Any]:
+    return {
+        "description": _safe_text(getattr(match, "reference_description", "")),
+        "cas_number": _safe_text(getattr(match, "reference_cas_number", ""), 12),
+        "manufacturer": _safe_text(
+            getattr(match, "reference_manufacturer", ""),
+            200,
+        ),
+        "categories": _safe_text_list(
+            getattr(match, "reference_categories", ())
+        )[:32],
+        "sample_id": _safe_text(getattr(match, "reference_sample_id", ""), 160),
+        "instrument": _safe_text(
+            getattr(match, "reference_instrument", ""),
+            200,
+        ),
+        "operator_name": _safe_text(
+            getattr(match, "reference_operator_name", ""),
+            200,
+        ),
+        "measurement_date": _safe_iso_date(
+            getattr(match, "reference_measurement_date", "")
+        ),
+    }
+
+
+def _reference_provenance_from_dict(payload: Any) -> dict[str, Any]:
+    provenance = _mapping(payload, "reference_provenance")
+    return {
+        "reference_description": _safe_text(provenance.get("description", "")),
+        "reference_cas_number": _safe_text(provenance.get("cas_number", ""), 12),
+        "reference_manufacturer": _safe_text(
+            provenance.get("manufacturer", ""),
+            200,
+        ),
+        "reference_categories": tuple(
+            _safe_text_list(provenance.get("categories", ()))[:32]
+        ),
+        "reference_sample_id": _safe_text(provenance.get("sample_id", ""), 160),
+        "reference_instrument": _safe_text(
+            provenance.get("instrument", ""),
+            200,
+        ),
+        "reference_operator_name": _safe_text(
+            provenance.get("operator_name", ""),
+            200,
+        ),
+        "reference_measurement_date": _safe_iso_date(
+            provenance.get("measurement_date", "")
+        ),
+    }
 
 
 def _peak_match_to_dict(match: Any) -> dict[str, Any]:
@@ -683,6 +745,21 @@ def _safe_text(value: Any, max_length: int = MAX_TEXT_LENGTH) -> str:
     text = _ABSOLUTE_PATH_PATTERN.sub(lambda match: f".../{match.group('name')}", text)
     text = _CONTROL_CHARACTER_PATTERN.sub(" ", text)
     return " ".join(text.split())[:max_length]
+
+
+def _safe_iso_date(value: Any) -> str:
+    text = _safe_text(value, 10)
+    if not text:
+        return ""
+    try:
+        normalized = date.fromisoformat(text).isoformat()
+    except ValueError as exc:
+        raise SessionFormatError(
+            "reference measurement date must use YYYY-MM-DD"
+        ) from exc
+    if normalized != text:
+        raise SessionFormatError("reference measurement date must use YYYY-MM-DD")
+    return normalized
 
 
 def _safe_text_list(values: Any) -> list[str]:

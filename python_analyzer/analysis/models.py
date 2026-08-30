@@ -75,6 +75,14 @@ class PeakBasedMatchResult:
     max_frequency_error: float | None = None
     evidence_level: str = "insufficient"
     method: str = "peak"
+    reference_description: str = ""
+    reference_cas_number: str = ""
+    reference_manufacturer: str = ""
+    reference_categories: tuple[str, ...] = ()
+    reference_sample_id: str = ""
+    reference_instrument: str = ""
+    reference_operator_name: str = ""
+    reference_measurement_date: str = ""
 
     @property
     def compared_points(self) -> int:
