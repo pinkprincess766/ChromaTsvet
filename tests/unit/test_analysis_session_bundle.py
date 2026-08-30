@@ -124,6 +124,7 @@ def test_session_roundtrip_preserves_analysis_state_without_private_paths(tmp_pa
     assert restored["result"]["peak_reviews"][0].status == PEAK_REVIEW_REJECTED
     assert restored["result"]["peak_reviews"][0].user_modified is True
     assert restored["result"]["matches"][0].substance_name == "Reference"
+    assert restored["result"]["matches"][0].reference_sample_id == ""
 
 
 def test_session_rejects_non_finite_spectrum_values(tmp_path):
@@ -189,6 +190,16 @@ def test_session_roundtrip_preserves_peak_match_diagnostics(tmp_path):
                 mean_frequency_error=1.0,
                 max_frequency_error=1.0,
                 evidence_level="weak",
+                reference_description=(
+                    "Stored at /Users/chemist/private/reference-notes.txt"
+                ),
+                reference_cas_number="108-88-3",
+                reference_manufacturer="Reference Works",
+                reference_categories=("Aromatic", "QC"),
+                reference_sample_id="RAMAN-QC-1",
+                reference_instrument="RamanScope 500",
+                reference_operator_name="Operator A",
+                reference_measurement_date="2026-08-30",
             )
         ],
         app_version="0.3.0",
@@ -197,6 +208,7 @@ def test_session_roundtrip_preserves_peak_match_diagnostics(tmp_path):
     output_path = tmp_path / "diagnostics.chromatsvet-session.json"
 
     write_analysis_session(output_path, payload)
+    raw_json = output_path.read_text(encoding="utf-8")
     restored = read_analysis_session(output_path)["result"]["matches"][0]
 
     assert restored.method == "peak"
@@ -206,6 +218,25 @@ def test_session_roundtrip_preserves_peak_match_diagnostics(tmp_path):
     assert restored.matched_peaks[0].frequency_diff == pytest.approx(1.0)
     assert restored.unmatched_unknown[0].frequency == pytest.approx(200.0)
     assert restored.unmatched_reference[0].frequency == pytest.approx(300.0)
+    assert restored.reference_cas_number == "108-88-3"
+    assert restored.reference_categories == ("Aromatic", "QC")
+    assert restored.reference_sample_id == "RAMAN-QC-1"
+    assert restored.reference_instrument == "RamanScope 500"
+    assert restored.reference_operator_name == "Operator A"
+    assert restored.reference_measurement_date == "2026-08-30"
+    assert "/Users/chemist/private" not in raw_json
+
+
+def test_session_rejects_invalid_reference_measurement_date(tmp_path):
+    payload = sample_payload()
+    payload["result"]["matches"][0]["reference_provenance"] = {
+        "measurement_date": "2026-02-30"
+    }
+    output_path = tmp_path / "invalid-reference-date.chromatsvet-session.json"
+    output_path.write_text(json.dumps(payload), encoding="utf-8")
+
+    with pytest.raises(SessionFormatError, match="YYYY-MM-DD"):
+        read_analysis_session(output_path)
 
 
 def test_session_rejects_non_finite_peak_match_diagnostics(tmp_path):

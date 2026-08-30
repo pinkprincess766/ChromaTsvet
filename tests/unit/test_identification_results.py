@@ -26,6 +26,7 @@ from python_analyzer.core.identification import SpectrumIdentifier
 from python_analyzer.gui.identification_details import (
     IdentificationDetailsDialog,
     identification_overview_values,
+    reference_provenance_rows,
 )
 
 
@@ -112,6 +113,14 @@ def test_peak_candidates_are_ranked_deterministically_with_full_diagnostics():
                 ReferencePeak(300.0, 0.6),
             ],
             data_type="raman",
+            description="Certified aromatic reference",
+            cas_number="108-88-3",
+            manufacturer="Reference Works",
+            categories=("Aromatic", "QC"),
+            sample_id="RAMAN-QC-1",
+            instrument="RamanScope 500",
+            operator_name="Operator A",
+            measurement_date="2026-08-30",
         )
         unknown = [
             ReferencePeak(100.0, 1.0),
@@ -136,6 +145,62 @@ def test_peak_candidates_are_ranked_deterministically_with_full_diagnostics():
     assert len(results[0].matched_peaks) == 3
     assert results[0].unmatched_unknown == []
     assert results[0].unmatched_reference == []
+    assert results[0].reference_description == "Certified aromatic reference"
+    assert results[0].reference_cas_number == "108-88-3"
+    assert results[0].reference_manufacturer == "Reference Works"
+    assert results[0].reference_categories == ("Aromatic", "QC")
+    assert results[0].reference_sample_id == "RAMAN-QC-1"
+    assert results[0].reference_instrument == "RamanScope 500"
+    assert results[0].reference_operator_name == "Operator A"
+    assert results[0].reference_measurement_date == "2026-08-30"
+
+
+def test_legacy_candidates_retain_reference_provenance():
+    identifier = SpectrumIdentifier(":memory:")
+    try:
+        assert identifier.add_reference(
+            "Legacy",
+            [1.0, 2.0, 3.0],
+            "L",
+            sample_id="LEGACY-1",
+            instrument="LegacyScope",
+            measurement_date="2026-08-29",
+        )
+        results = identifier.find_matches(np.asarray([1.0, 2.0, 3.0]))
+    finally:
+        identifier.close()
+
+    assert results[0].reference_sample_id == "LEGACY-1"
+    assert results[0].reference_instrument == "LegacyScope"
+    assert results[0].reference_measurement_date == "2026-08-29"
+
+
+def test_invalid_stored_provenance_does_not_break_peak_matching():
+    identifier = SpectrumIdentifier(":memory:")
+    try:
+        assert identifier.add_reference(
+            "Tampered",
+            None,
+            "T",
+            peaks=[ReferencePeak(100.0, 1.0)],
+            data_type="raman",
+        )
+        identifier.conn.execute(
+            "UPDATE compounds SET cas_number = ?, measurement_date = ?",
+            ("not-a-cas", "tomorrow"),
+        )
+        identifier.conn.commit()
+
+        results = identifier.find_peak_matches(
+            [ReferencePeak(100.0, 1.0)],
+            data_type="raman",
+        )
+    finally:
+        identifier.close()
+
+    assert len(results) == 1
+    assert results[0].reference_cas_number == ""
+    assert results[0].reference_measurement_date == ""
 
 
 def test_malformed_legacy_reference_is_skipped_without_echoing_its_name(monkeypatch):
@@ -175,9 +240,18 @@ def test_overview_and_dialog_expose_peak_evidence_without_claiming_identity(qapp
         mean_frequency_error=0.5,
         max_frequency_error=0.5,
         evidence_level=EVIDENCE_WEAK,
+        reference_description="Certified\nreference",
+        reference_cas_number="108-88-3",
+        reference_manufacturer="Reference Works",
+        reference_categories=("Aromatic", "QC"),
+        reference_sample_id="RAMAN-QC-1",
+        reference_instrument="RamanScope 500",
+        reference_operator_name="Operator A",
+        reference_measurement_date="2026-08-30",
     )
 
     values = identification_overview_values(match)
+    provenance = reference_provenance_rows(match)
     dialog = IdentificationDetailsDialog(None, match)
     try:
         tabs = dialog.findChild(QTabWidget)
@@ -196,6 +270,19 @@ def test_overview_and_dialog_expose_peak_evidence_without_claiming_identity(qapp
         assert tabs.count() == 3
         assert isinstance(matched_table, QTableWidget)
         assert matched_table.rowCount() == 1
+        assert provenance == [
+            ("Description", "Certified reference"),
+            ("CAS number", "108-88-3"),
+            ("Manufacturer", "Reference Works"),
+            ("Categories", "Aromatic, QC"),
+            ("Sample ID", "RAMAN-QC-1"),
+            ("Instrument", "RamanScope 500"),
+            ("Operator", "Operator A"),
+            ("Measurement date", "2026-08-30"),
+        ]
+        displayed_text = {label.text() for label in dialog.findChildren(QLabel)}
+        assert "RAMAN-QC-1" in displayed_text
+        assert "RamanScope 500" in displayed_text
         assert any(
             "validated chemical identification" in label.text()
             for label in dialog.findChildren(QLabel)

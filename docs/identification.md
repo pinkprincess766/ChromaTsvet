@@ -98,10 +98,14 @@ and check digit, and measurement dates must use the exact ISO `YYYY-MM-DD`
 form. Exported documents contain only reference data and never include database
 paths, source file paths, or recent-file state.
 
+Identification candidate details surface the portable provenance fields next to
+the matching diagnostics. Saved analysis sessions retain the same bounded fields
+without local database identifiers or source paths, so a later review can tell
+which reference acquisition supported the candidate score.
+
 ## Next Steps
 
 1. Store full analysis settings alongside reference peaks.
-2. Surface reference provenance and acquisition metadata in candidate details.
-3. Consider replacing greedy selection with an optimal assignment algorithm if
+2. Consider replacing greedy selection with an optimal assignment algorithm if
    dense or ambiguous peak sets become common.
-4. Rebuild the default reference library with real peak features.
+3. Rebuild the default reference library with real peak features.

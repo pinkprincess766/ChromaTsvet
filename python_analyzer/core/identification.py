@@ -29,6 +29,7 @@ from python_analyzer.core.reference_library_io import (
 )
 from python_analyzer.core.reference_repository import (
     ReferenceLibraryEntry,
+    ReferenceMatchSource,
     ReferenceRepository,
 )
 
@@ -44,6 +45,14 @@ class MatchResult:
     compared_points: int = 0
     method: str = "legacy_cosine"
     evidence_level: str = EVIDENCE_LEGACY
+    reference_description: str = ""
+    reference_cas_number: str = ""
+    reference_manufacturer: str = ""
+    reference_categories: tuple[str, ...] = ()
+    reference_sample_id: str = ""
+    reference_instrument: str = ""
+    reference_operator_name: str = ""
+    reference_measurement_date: str = ""
 
     def __init__(
         self,
@@ -55,6 +64,14 @@ class MatchResult:
         matched_points: int | None = None,
         method: str = "legacy_cosine",
         evidence_level: str = EVIDENCE_LEGACY,
+        reference_description: str = "",
+        reference_cas_number: str = "",
+        reference_manufacturer: str = "",
+        reference_categories: tuple[str, ...] = (),
+        reference_sample_id: str = "",
+        reference_instrument: str = "",
+        reference_operator_name: str = "",
+        reference_measurement_date: str = "",
     ):
         if matched_points is not None:
             compared_points = matched_points
@@ -64,6 +81,14 @@ class MatchResult:
         self.compared_points = compared_points
         self.method = method
         self.evidence_level = evidence_level
+        self.reference_description = reference_description
+        self.reference_cas_number = reference_cas_number
+        self.reference_manufacturer = reference_manufacturer
+        self.reference_categories = reference_categories
+        self.reference_sample_id = reference_sample_id
+        self.reference_instrument = reference_instrument
+        self.reference_operator_name = reference_operator_name
+        self.reference_measurement_date = reference_measurement_date
 
     @property
     def matched_points(self) -> int:
@@ -192,7 +217,8 @@ class SpectrumIdentifier:
         unk_norm = self._normalize(unknown_values)
         results = []
 
-        for name, formula, spectrum_json in self.repository.legacy_reference_rows():
+        for reference in self.repository.legacy_match_sources():
+            spectrum_json = reference.spectrum_json
             if not spectrum_json:
                 continue  # peak-only reference
             try:
@@ -223,11 +249,12 @@ class SpectrumIdentifier:
                 continue
 
             results.append(MatchResult(
-                substance_name=name,
-                formula=formula or "",
+                substance_name=reference.name,
+                formula=reference.formula,
                 score=round(float(score), 3),
                 # This is the overlap used by cosine similarity, not matched peaks.
-                compared_points=min_len
+                compared_points=min_len,
+                **_reference_provenance_kwargs(reference),
             ))
 
         return sorted(results, key=lambda x: x.score, reverse=True)
@@ -246,15 +273,15 @@ class SpectrumIdentifier:
         results: List[PeakBasedMatchResult] = []
 
         requested_data_type = normalize_data_type(data_type) if data_type else None
-        for name, formula, peaks_json, ref_data_type in self.repository.peak_reference_rows():
-            normalized_ref_type = normalize_data_type(ref_data_type)
+        for reference in self.repository.peak_match_sources():
+            normalized_ref_type = normalize_data_type(reference.data_type)
             if (
                 requested_data_type
                 and normalized_ref_type not in (requested_data_type, DEFAULT_DATA_TYPE)
             ):
                 continue
             try:
-                ref_peak_dicts = json.loads(peaks_json)
+                ref_peak_dicts = json.loads(reference.peaks_json or "")
                 if not isinstance(ref_peak_dicts, list):
                     raise ValueError("peaks_json must contain a list")
                 ref_peaks = normalize_reference_peaks(ref_peak_dicts)
@@ -290,8 +317,8 @@ class SpectrumIdentifier:
 
             results.append(
                 PeakBasedMatchResult(
-                    substance_name=name,
-                    formula=formula or "",
+                    substance_name=reference.name,
+                    formula=reference.formula,
                     score=score,
                     matched_peaks=matches,
                     unmatched_unknown=[
@@ -312,6 +339,7 @@ class SpectrumIdentifier:
                     mean_frequency_error=evidence.mean_frequency_error,
                     max_frequency_error=evidence.max_frequency_error,
                     evidence_level=evidence.evidence_level,
+                    **_reference_provenance_kwargs(reference),
                 )
             )
 
@@ -339,6 +367,21 @@ def _finite_sort_value(value: object) -> float:
     except (TypeError, ValueError):
         return math.inf
     return numeric_value if math.isfinite(numeric_value) else math.inf
+
+
+def _reference_provenance_kwargs(
+    reference: ReferenceMatchSource,
+) -> dict[str, object]:
+    return {
+        "reference_description": reference.description,
+        "reference_cas_number": reference.cas_number,
+        "reference_manufacturer": reference.manufacturer,
+        "reference_categories": reference.categories,
+        "reference_sample_id": reference.sample_id,
+        "reference_instrument": reference.instrument,
+        "reference_operator_name": reference.operator_name,
+        "reference_measurement_date": reference.measurement_date,
+    }
 
 
 def _finite_spectrum(values: object) -> np.ndarray:
