@@ -41,7 +41,7 @@ pub fn median_filter(signal: &Array1<f64>, window_size: usize) -> Array1<f64> {
     if n < 3 {
         return cleaned;
     }
-    if window_size < 3 || window_size % 2 == 0 {
+    if window_size < 3 || window_size.is_multiple_of(2) {
         return cleaned;
     }
 
@@ -126,7 +126,7 @@ fn normalized_window_size(requested: usize, signal_len: usize) -> usize {
 
     let automatic = (signal_len / 15).max(5);
     let requested = if requested < 3 { automatic } else { requested };
-    let max_odd = if signal_len % 2 == 0 {
+    let max_odd = if signal_len.is_multiple_of(2) {
         signal_len.saturating_sub(1)
     } else {
         signal_len
