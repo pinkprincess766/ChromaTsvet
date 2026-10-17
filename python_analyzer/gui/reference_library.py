@@ -31,7 +31,6 @@ from python_analyzer.core.identification import (
 from python_analyzer.core.reference_library_io import (
     DUPLICATE_POLICIES,
     MAX_REFERENCE_CAS_LENGTH,
-    MAX_REFERENCE_DESCRIPTION_LENGTH,
     MAX_REFERENCE_FORMULA_LENGTH,
     MAX_REFERENCE_INSTRUMENT_LENGTH,
     MAX_REFERENCE_MANUFACTURER_LENGTH,

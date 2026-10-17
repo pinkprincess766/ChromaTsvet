@@ -7,7 +7,6 @@ import json
 import csv
 import logging
 import os
-import sys
 import tempfile
 from datetime import datetime
 from pathlib import Path
@@ -18,17 +17,16 @@ from PyQt5.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout,
     QPushButton, QTableWidget, QTableWidgetItem, QLabel,
     QFileDialog, QHBoxLayout, QMessageBox, QInputDialog, QTextEdit,
-    QHeaderView, QDialog, QFormLayout, QComboBox, QDialogButtonBox, QSpinBox,
-    QCheckBox, QDoubleSpinBox, QGroupBox, QStatusBar, QTabWidget, QAction,
+    QHeaderView, QDialog, QComboBox, QCheckBox, QStatusBar, QTabWidget, QAction,
     QProgressDialog,
 )
 from PyQt5.QtCore import Qt, QSettings
-from PyQt5.QtGui import (QFont, QColor, QPalette, QFontDatabase, QKeySequence,
-                         QPixmap, QTextCharFormat, QTextCursor)
+from PyQt5.QtGui import (QColor, QFontDatabase, QKeySequence,
+                         QPixmap, QTextCursor)
 import pyqtgraph as pg
 import pyqtgraph.exporters as pg_exporters
 
-from paths import ensure_rust_in_path, get_library_db_path, get_project_root
+from paths import get_project_root
 
 # Local imports
 from python_analyzer.core.identification import (
