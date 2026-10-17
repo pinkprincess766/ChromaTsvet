@@ -2,13 +2,10 @@
 
 from __future__ import annotations
 
-import json
-
 from PyQt5.QtWidgets import (
     QDialog, QVBoxLayout, QFormLayout, QComboBox, QSpinBox, QHBoxLayout,
     QPushButton, QLabel, QDialogButtonBox, QTextEdit, QGroupBox, QCheckBox,
-    QDoubleSpinBox, QTabWidget, QApplication, QTableWidget, QTableWidgetItem,
-    QInputDialog, QMessageBox
+    QDoubleSpinBox, QApplication, QInputDialog, QMessageBox
 )
 from PyQt5.QtCore import Qt
 from PyQt5.QtGui import QFont, QFontDatabase, QTextCursor
