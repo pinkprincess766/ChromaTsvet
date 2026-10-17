@@ -25,7 +25,7 @@ pub fn compute_magnitude_spectrum(signal: &Array1<f64>, window_type: &str) -> Ar
     let spectrum_len = n / 2 + 1;
     let mut magnitude = Array1::<f64>::zeros(spectrum_len);
     for bin in 0..spectrum_len {
-        let has_mirrored_partner = bin != 0 && !(n % 2 == 0 && bin == n / 2);
+        let has_mirrored_partner = bin != 0 && !(n.is_multiple_of(2) && bin == n / 2);
         let scale = if has_mirrored_partner { 2.0 } else { 1.0 } / n as f64;
         magnitude[bin] = buffer[bin].norm() * scale;
     }

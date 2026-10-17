@@ -356,9 +356,7 @@ fn refine_peak_position(signal: &Array1<f64>, peak_idx: usize) -> f64 {
     }
 
     let offset = 0.5 * (left - right) / denominator;
-    if !offset.is_finite() || offset.abs() > 1.0 {
-        peak_idx as f64
-    } else if offset.abs() <= SUB_BIN_REFINEMENT_DEADBAND {
+    if !offset.is_finite() || offset.abs() > 1.0 || offset.abs() <= SUB_BIN_REFINEMENT_DEADBAND {
         peak_idx as f64
     } else {
         peak_idx as f64 + offset
@@ -442,8 +440,7 @@ fn integration_bounds(
     }
 
     let half_window = (signal_len / 100)
-        .max(FALLBACK_HALF_WINDOW)
-        .min(25)
+        .clamp(FALLBACK_HALF_WINDOW, 25)
         .min(signal_len.saturating_sub(1));
     let left_index = peak_idx.saturating_sub(half_window);
     let right_index = peak_idx.saturating_add(half_window).min(signal_len - 1);
